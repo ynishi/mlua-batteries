@@ -1,0 +1,40 @@
+[package]
+name = "mlua-batteries"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "Batteries-included standard library modules for mlua"
+license = "MIT OR Apache-2.0"
+authors = ["Yutaka Nishimura"]
+repository = "https://github.com/ynishi/mlua-batteries"
+homepage = "https://github.com/ynishi/mlua-batteries"
+keywords = ["lua", "mlua", "batteries", "stdlib", "sandbox"]
+categories = ["development-tools", "api-bindings"]
+
+[features]
+default = ["json", "env", "path", "time"]
+json = ["dep:serde_json"]
+env = []
+path = []
+time = []
+fs = ["dep:walkdir", "dep:globset"]
+http = ["dep:ureq"]
+llm = ["http", "json", "dep:secrecy"]
+hash = ["dep:sha2"]
+sandbox = ["dep:cap-std"]
+full = ["json", "env", "path", "time", "fs", "http", "llm", "hash", "sandbox"]
+
+[dependencies]
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
+
+# Feature-gated
+serde_json = { version = "1", optional = true }
+walkdir = { version = "2", optional = true }
+globset = { version = "0.4", optional = true }
+ureq = { version = "3", optional = true }
+sha2 = { version = "0.10", optional = true }
+secrecy = { version = "0.10", optional = true }
+cap-std = { version = "4", optional = true }
+
+[dev-dependencies]
+proptest = "1"
