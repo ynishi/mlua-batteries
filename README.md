@@ -141,6 +141,10 @@ All path arguments are UTF-8. Non-UTF-8 Lua strings are rejected at the `FromLua
 
 Rust **1.77** or later.
 
+## Contributing
+
+Bug reports and feature requests are welcome — please [open an issue](https://github.com/ynishi/mlua-batteries/issues). Pull requests are also appreciated.
+
 ## License
 
 Licensed under either of
