@@ -60,6 +60,8 @@
 pub mod config;
 pub mod policy;
 
+#[cfg(feature = "base64")]
+pub mod base64;
 #[cfg(feature = "env")]
 pub mod env;
 #[cfg(feature = "fs")]
@@ -72,10 +74,22 @@ pub mod http;
 pub mod json;
 #[cfg(feature = "llm")]
 pub mod llm;
+#[cfg(feature = "log")]
+pub mod log;
 #[cfg(feature = "path")]
 pub mod path;
+#[cfg(feature = "regex")]
+pub mod regex;
+#[cfg(feature = "schema")]
+pub mod schema;
+#[cfg(feature = "string")]
+pub mod string;
 #[cfg(feature = "time")]
 pub mod time;
+#[cfg(feature = "uuid")]
+pub mod uuid;
+#[cfg(feature = "validate")]
+pub mod validate;
 
 pub(crate) mod util;
 
@@ -127,11 +141,18 @@ pub fn register_all_with(lua: &Lua, namespace: &str, config: Config) -> LuaResul
     register!("json", json);
     register!("env", env);
     register!("path", path);
+    register!("string", string);
+    register!("regex", regex);
+    register!("validate", validate);
+    register!("log", log);
+    register!("uuid", uuid);
+    register!("base64", base64);
     register!("time", time);
     register!("fs", fs);
     register!("http", http);
     register!("llm", llm);
     register!("hash", hash);
+    register!("schema", schema);
 
     lua.globals().set(namespace, ns.clone())?;
     Ok(ns)
@@ -169,11 +190,18 @@ pub fn module_entries() -> Vec<(&'static str, ModuleFactory)> {
     entry!("json", json);
     entry!("env", env);
     entry!("path", path);
+    entry!("string", string);
+    entry!("regex", regex);
+    entry!("validate", validate);
+    entry!("log", log);
+    entry!("uuid", uuid);
+    entry!("base64", base64);
     entry!("time", time);
     entry!("fs", fs);
     entry!("http", http);
     entry!("llm", llm);
     entry!("hash", hash);
+    entry!("schema", schema);
 
     entries
 }
