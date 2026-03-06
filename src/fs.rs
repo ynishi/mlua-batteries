@@ -10,6 +10,8 @@
 //! local fs = std.fs
 //! local content = fs.read("file.txt")
 //! fs.write("out.txt", content)
+//! local bytes = fs.read_binary("image.png")  -- raw bytes as Lua string
+//! fs.write_binary("copy.png", bytes)
 //! fs.copy("src.txt", "dst.txt")
 //! fs.mkdir("a/b/c")
 //! fs.remove("old.txt")
@@ -79,6 +81,26 @@ pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
     t.set(
         "write",
         lua.create_function(|lua, (path, content): (String, String)| {
+            let access = check_path(lua, &path, PathOp::Write)?;
+            access
+                .write(content.as_bytes())
+                .map_err(LuaError::external)?;
+            Ok(true)
+        })?,
+    )?;
+
+    t.set(
+        "read_binary",
+        lua.create_function(|lua, path: String| {
+            let access = check_path(lua, &path, PathOp::Read)?;
+            let bytes = access.read_bytes().map_err(LuaError::external)?;
+            lua.create_string(&bytes)
+        })?,
+    )?;
+
+    t.set(
+        "write_binary",
+        lua.create_function(|lua, (path, content): (String, mlua::String)| {
             let access = check_path(lua, &path, PathOp::Write)?;
             access
                 .write(content.as_bytes())
@@ -520,6 +542,55 @@ mod tests {
 
     #[cfg(feature = "sandbox")]
     #[test]
+    fn sandboxed_blocks_read_binary_outside() {
+        let lua = Lua::new();
+        let sandbox_dir = std::env::temp_dir().join("mlua_bat_test_sandbox_read_binary");
+        std::fs::create_dir_all(&sandbox_dir).unwrap();
+
+        let config = crate::config::Config::builder()
+            .path_policy(crate::policy::Sandboxed::new([&sandbox_dir]).unwrap())
+            .build()
+            .unwrap();
+        crate::register_all_with(&lua, "std", config).unwrap();
+
+        let result: mlua::Result<mlua::Value> = lua
+            .load(r#"return std.fs.read_binary("/etc/hosts")"#)
+            .eval();
+        assert!(result.is_err());
+
+        let _ = std::fs::remove_dir_all(&sandbox_dir);
+    }
+
+    #[cfg(feature = "sandbox")]
+    #[test]
+    fn read_only_blocks_write_binary() {
+        let lua = Lua::new();
+        let sandbox_dir = std::env::temp_dir().join("mlua_bat_test_readonly_write_binary");
+        std::fs::create_dir_all(&sandbox_dir).unwrap();
+        let file_str = sandbox_dir.join("test.bin").to_string_lossy().to_string();
+
+        let config = crate::config::Config::builder()
+            .path_policy(
+                crate::policy::Sandboxed::new([&sandbox_dir])
+                    .unwrap()
+                    .read_only(),
+            )
+            .build()
+            .unwrap();
+        crate::register_all_with(&lua, "std", config).unwrap();
+
+        let result: mlua::Result<mlua::Value> = lua
+            .load(&format!(
+                r#"return std.fs.write_binary("{file_str}", "\x00")"#
+            ))
+            .eval();
+        assert!(result.is_err());
+
+        let _ = std::fs::remove_dir_all(&sandbox_dir);
+    }
+
+    #[cfg(feature = "sandbox")]
+    #[test]
     fn sandboxed_glob_blocks_outside_pattern() {
         let lua = Lua::new();
         let sandbox_dir = std::env::temp_dir().join("mlua_bat_test_sandbox_glob_block");
@@ -636,6 +707,105 @@ mod tests {
 
         let s: String = eval(&format!(r#"return std.fs.read("{path_str}")"#));
         assert_eq!(s, "hello\u{e9}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_binary_preserves_raw_bytes() {
+        let dir = std::env::temp_dir().join("mlua_bat_test_fs_read_binary");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("raw.bin");
+        // Write bytes including non-UTF-8 and null
+        let raw: Vec<u8> = vec![0x89, 0x50, 0x4E, 0x47, 0x00, 0xFF, 0xFE];
+        std::fs::write(&path, &raw).unwrap();
+        let path_str = path.to_string_lossy();
+
+        let lua = Lua::new();
+        crate::register_all(&lua, "std").unwrap();
+        let result: mlua::String = lua
+            .load(&format!(r#"return std.fs.read_binary("{path_str}")"#))
+            .eval()
+            .unwrap();
+        assert_eq!(result.as_bytes(), &raw);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_binary_nonexistent_returns_error() {
+        let lua = Lua::new();
+        crate::register_all(&lua, "std").unwrap();
+        let result: mlua::Result<mlua::Value> = lua
+            .load(r#"return std.fs.read_binary("/tmp/__mlua_bat_read_binary_nonexistent__")"#)
+            .eval();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn write_binary_and_read_back() {
+        let dir = std::env::temp_dir().join("mlua_bat_test_fs_write_binary");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("out.bin");
+        let path_str = path.to_string_lossy();
+
+        let lua = Lua::new();
+        crate::register_all(&lua, "std").unwrap();
+
+        // Write raw bytes (including null and non-UTF-8) via Lua
+        let result: bool = lua
+            .load(&format!(
+                r#"return std.fs.write_binary("{path_str}", "\x89PNG\x00\xFF\xFE")"#
+            ))
+            .eval()
+            .unwrap();
+        assert!(result);
+
+        let written = std::fs::read(&path).unwrap();
+        assert_eq!(written, vec![0x89, 0x50, 0x4E, 0x47, 0x00, 0xFF, 0xFE]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn binary_roundtrip() {
+        let dir = std::env::temp_dir().join("mlua_bat_test_fs_binary_roundtrip");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("roundtrip.bin");
+        let path_str = path.to_string_lossy();
+
+        // Write raw bytes from Rust, read via read_binary, write via write_binary
+        let original: Vec<u8> = (0..=255).collect();
+        std::fs::write(&path, &original).unwrap();
+
+        let lua = Lua::new();
+        crate::register_all(&lua, "std").unwrap();
+
+        let n: i64 = lua
+            .load(&format!(
+                r#"
+                local data = std.fs.read_binary("{path_str}")
+                return #data
+            "#
+            ))
+            .eval()
+            .unwrap();
+        assert_eq!(n, 256);
+
+        // Roundtrip: read → write → verify
+        let dst = dir.join("copy.bin");
+        let dst_str = dst.to_string_lossy();
+        lua.load(&format!(
+            r#"
+            local data = std.fs.read_binary("{path_str}")
+            std.fs.write_binary("{dst_str}", data)
+        "#
+        ))
+        .exec()
+        .unwrap();
+
+        let copied = std::fs::read(&dst).unwrap();
+        assert_eq!(copied, original);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
