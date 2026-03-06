@@ -67,6 +67,20 @@ fn strip_dot_slash(path: &str) -> &str {
     path.strip_prefix("./").unwrap_or(path)
 }
 
+/// Return an error if the file exceeds `Config::max_read_bytes` (when set).
+fn check_read_size(lua: &Lua, access: &crate::policy::FsAccess) -> LuaResult<()> {
+    let limit = with_config(lua, |c| c.max_read_bytes)?;
+    if let Some(max) = limit {
+        let size = access.file_size().map_err(LuaError::external)?;
+        if size > max {
+            return Err(LuaError::external(format!(
+                "file size {size} bytes exceeds max_read_bytes limit ({max} bytes)"
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
     let t = lua.create_table()?;
 
@@ -74,6 +88,7 @@ pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
         "read",
         lua.create_function(|lua, path: String| {
             let access = check_path(lua, &path, PathOp::Read)?;
+            check_read_size(lua, &access)?;
             access.read_to_string().map_err(LuaError::external)
         })?,
     )?;
@@ -93,6 +108,7 @@ pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
         "read_binary",
         lua.create_function(|lua, path: String| {
             let access = check_path(lua, &path, PathOp::Read)?;
+            check_read_size(lua, &access)?;
             let bytes = access.read_bytes().map_err(LuaError::external)?;
             lua.create_string(&bytes)
         })?,
@@ -806,6 +822,110 @@ mod tests {
 
         let copied = std::fs::read(&dst).unwrap();
         assert_eq!(copied, original);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_respects_max_read_bytes() {
+        let lua = Lua::new();
+        let dir = std::env::temp_dir().join("mlua_bat_test_max_read_bytes");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("big.txt");
+        std::fs::write(&path, "hello world").unwrap(); // 11 bytes
+        let path_str = path.to_string_lossy();
+
+        let config = crate::config::Config::builder()
+            .max_read_bytes(5)
+            .build()
+            .unwrap();
+        crate::register_all_with(&lua, "std", config).unwrap();
+
+        let result: mlua::Result<mlua::Value> = lua
+            .load(&format!(r#"return std.fs.read("{path_str}")"#))
+            .eval();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("max_read_bytes"),
+            "expected max_read_bytes error, got: {err_msg}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_binary_respects_max_read_bytes() {
+        let lua = Lua::new();
+        let dir = std::env::temp_dir().join("mlua_bat_test_max_read_bytes_binary");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("big.bin");
+        std::fs::write(&path, vec![0u8; 100]).unwrap();
+        let path_str = path.to_string_lossy();
+
+        let config = crate::config::Config::builder()
+            .max_read_bytes(50)
+            .build()
+            .unwrap();
+        crate::register_all_with(&lua, "std", config).unwrap();
+
+        let result: mlua::Result<mlua::Value> = lua
+            .load(&format!(r#"return std.fs.read_binary("{path_str}")"#))
+            .eval();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("max_read_bytes"),
+            "expected max_read_bytes error, got: {err_msg}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_within_max_read_bytes_succeeds() {
+        let lua = Lua::new();
+        let dir = std::env::temp_dir().join("mlua_bat_test_max_read_ok");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("small.txt");
+        std::fs::write(&path, "hi").unwrap(); // 2 bytes
+        let path_str = path.to_string_lossy();
+
+        let config = crate::config::Config::builder()
+            .max_read_bytes(1024)
+            .build()
+            .unwrap();
+        crate::register_all_with(&lua, "std", config).unwrap();
+
+        let s: String = lua
+            .load(&format!(r#"return std.fs.read("{path_str}")"#))
+            .eval()
+            .unwrap();
+        assert_eq!(s, "hi");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_exact_boundary_succeeds() {
+        let lua = Lua::new();
+        let dir = std::env::temp_dir().join("mlua_bat_test_max_read_boundary");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("exact.txt");
+        std::fs::write(&path, "12345").unwrap(); // exactly 5 bytes
+        let path_str = path.to_string_lossy();
+
+        let config = crate::config::Config::builder()
+            .max_read_bytes(5)
+            .build()
+            .unwrap();
+        crate::register_all_with(&lua, "std", config).unwrap();
+
+        let s: String = lua
+            .load(&format!(r#"return std.fs.read("{path_str}")"#))
+            .eval()
+            .unwrap();
+        assert_eq!(s, "12345");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

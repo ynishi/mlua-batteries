@@ -166,6 +166,14 @@ impl FsAccess {
 
     // ── I/O operations (crate-internal) ──────────────
 
+    pub(crate) fn file_size(&self) -> io::Result<u64> {
+        match &self.0 {
+            FsAccessInner::Direct(p) => Ok(std::fs::metadata(p)?.len()),
+            #[cfg(feature = "sandbox")]
+            FsAccessInner::Capped { dir, relative } => Ok(dir.metadata(relative)?.len()),
+        }
+    }
+
     pub(crate) fn read_to_string(&self) -> io::Result<String> {
         match &self.0 {
             FsAccessInner::Direct(p) => std::fs::read_to_string(p),

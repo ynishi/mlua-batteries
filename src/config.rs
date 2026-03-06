@@ -54,6 +54,7 @@ pub struct Config {
     pub(crate) http_policy: Box<dyn HttpPolicy>,
     pub(crate) env_policy: Box<dyn EnvPolicy>,
     pub(crate) llm_policy: Box<dyn LlmPolicy>,
+    pub(crate) max_read_bytes: Option<u64>,
     pub(crate) max_walk_depth: usize,
     pub(crate) max_walk_entries: usize,
     pub(crate) max_json_depth: usize,
@@ -72,6 +73,7 @@ impl std::fmt::Debug for Config {
             .field("http_policy", &self.http_policy.policy_name())
             .field("env_policy", &self.env_policy.policy_name())
             .field("llm_policy", &self.llm_policy.policy_name())
+            .field("max_read_bytes", &self.max_read_bytes)
             .field("max_walk_depth", &self.max_walk_depth)
             .field("max_walk_entries", &self.max_walk_entries)
             .field("max_json_depth", &self.max_json_depth)
@@ -92,6 +94,7 @@ impl Default for Config {
             http_policy: Box::new(Unrestricted),
             env_policy: Box::new(Unrestricted),
             llm_policy: Box::new(Unrestricted),
+            max_read_bytes: None,
             max_walk_depth: 256,
             max_walk_entries: 10_000,
             max_json_depth: 128,
@@ -176,6 +179,15 @@ impl ConfigBuilder {
         self
     }
 
+    /// Maximum number of bytes `fs.read` and `fs.read_binary` will load.
+    ///
+    /// Default: `None` (no limit).  When set, an error is returned if
+    /// the file size exceeds this value.
+    pub fn max_read_bytes(mut self, bytes: u64) -> Self {
+        self.inner.max_read_bytes = Some(bytes);
+        self
+    }
+
     /// Maximum directory depth for `fs.walk`.
     ///
     /// Default: `256`.
@@ -250,6 +262,7 @@ mod tests {
     #[test]
     fn default_config_values() {
         let config = Config::default();
+        assert_eq!(config.max_read_bytes, None);
         assert_eq!(config.max_walk_depth, 256);
         assert_eq!(config.max_walk_entries, 10_000);
         assert_eq!(config.max_json_depth, 128);
@@ -264,6 +277,7 @@ mod tests {
     #[test]
     fn builder_overrides() {
         let config = Config::builder()
+            .max_read_bytes(4096)
             .max_walk_depth(10)
             .max_walk_entries(500)
             .max_json_depth(32)
@@ -273,6 +287,7 @@ mod tests {
             .build()
             .unwrap();
 
+        assert_eq!(config.max_read_bytes, Some(4096));
         assert_eq!(config.max_walk_depth, 10);
         assert_eq!(config.max_walk_entries, 500);
         assert_eq!(config.max_json_depth, 32);
