@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-04-14
+
 ### Fixed
 - `json.encode` now accepts `mlua::Value::NULL` (the `LightUserData(null_ptr)`
   sentinel produced by `mlua::serde::LuaSerdeExt::to_value`) and maps it to
@@ -59,7 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Policy system with trait-based access control:
   `PathPolicy`, `HttpPolicy`, `EnvPolicy`, `LlmPolicy`.
 
-[Unreleased]: https://github.com/ynishi/mlua-batteries/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/ynishi/mlua-batteries/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/ynishi/mlua-batteries/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/ynishi/mlua-batteries/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ynishi/mlua-batteries/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/ynishi/mlua-batteries/compare/v0.1.1...v0.1.2
