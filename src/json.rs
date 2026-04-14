@@ -145,6 +145,11 @@ fn lua_to_json_inner(value: &LuaValue, depth: usize, max_depth: usize) -> LuaRes
     }
     match value {
         LuaValue::Nil => Ok(JsonValue::Null),
+        // `mlua::serde::LuaSerdeExt` maps JSON `null` to `Value::NULL`, which is
+        // `LightUserData(ptr::null_mut())`.  Recognize that sentinel so values
+        // produced by mlua's serde bridge can round-trip through `json.encode`.
+        // Non-null `LightUserData` (app-specific) continues to error below.
+        LuaValue::LightUserData(u) if u.0.is_null() => Ok(JsonValue::Null),
         LuaValue::Boolean(b) => Ok(JsonValue::Bool(*b)),
         LuaValue::Integer(i) => Ok(JsonValue::Number((*i).into())),
         LuaValue::Number(n) => serde_json::Number::from_f64(*n)
@@ -340,6 +345,49 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("unsupported table key type"));
+    }
+
+    #[test]
+    fn encode_accepts_mlua_null_sentinel() {
+        // `mlua::Value::NULL` is the sentinel produced by `LuaSerdeExt::to_value`
+        // for JSON `null`.  Encode must map it back to JSON `null` so that values
+        // going through mlua's serde bridge can be re-encoded.
+        let lua = Lua::new();
+        crate::register_all(&lua, "std").unwrap();
+
+        lua.globals().set("_null", LuaValue::NULL).unwrap();
+
+        let s: String = lua
+            .load(r#"return std.json.encode({ x = _null, y = 1 })"#)
+            .eval()
+            .unwrap();
+
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert!(v["x"].is_null());
+        assert_eq!(v["y"], 1);
+    }
+
+    #[test]
+    fn encode_rejects_non_null_light_userdata() {
+        // Guardrail: only the canonical NULL sentinel is accepted.  App-specific
+        // LightUserData pointers must still error — we don't want to silently
+        // serialize arbitrary pointers as `null`.
+        let lua = Lua::new();
+        crate::register_all(&lua, "std").unwrap();
+
+        let mut dummy = 42u8;
+        let ud = LuaValue::LightUserData(mlua::LightUserData(
+            &mut dummy as *mut _ as *mut std::ffi::c_void,
+        ));
+        lua.globals().set("_ud", ud).unwrap();
+
+        let result: mlua::Result<String> =
+            lua.load(r#"return std.json.encode(_ud)"#).eval();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported type for JSON conversion"));
     }
 
     #[test]
