@@ -2,3 +2,4 @@
 Cargo.lock
 workspace
 .claude
+.mcp.json
