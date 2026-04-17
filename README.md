@@ -2,9 +2,9 @@
 
 Batteries-included standard library modules for [mlua](https://github.com/mlua-rs/mlua).
 
-Lua 5.4 scripts gain access to JSON, environment variables, filesystem, HTTP, hashing, and LLM chat completion — all behind a configurable policy layer that can sandbox untrusted code.
+Lua 5.4 scripts gain access to JSON, environment variables, filesystem, HTTP, hashing, LLM chat completion, structured async tasks, and SQLite-backed storage — all behind a configurable policy layer that can sandbox untrusted code.
 
-All APIs are **synchronous (blocking)**. No async runtime required.
+Core modules (`json`, `env`, `path`, `time`, `fs`, `http`, `hash`, `llm`, `string`, `regex`, `validate`, `log`, `uuid`, `base64`, `schema`, `sandbox`) are **synchronous (blocking)** and require no async runtime. The optional `task` / `sql` / `kv` modules require a `tokio` current-thread runtime driving a `LocalSet` (see the [Async modules](#async-modules) section).
 
 ## Modules
 
@@ -14,19 +14,30 @@ All APIs are **synchronous (blocking)**. No async runtime required.
 | `env` | `env` | Environment variable access (overlay-safe `set`) |
 | `path` | `path` | Path manipulation (pure computation + `absolute`) |
 | `time` | `time` | Timestamps, sleep, `measure` |
+| `string` | `string` | String utilities beyond Lua's built-ins |
+| `regex` | `regex` | Regex match / replace (`regex` crate) |
+| `validate` | `validate` | Lightweight value validation helpers |
+| `log` | `log` | Bridge to the host's `log` facade |
+| `uuid` | `uuid` | UUID v4 / v7 generation |
+| `base64` | `base64` | Base64 encode / decode |
 | `fs` | `fs` | File I/O, `walk`, `glob` (`walkdir` + `globset`) |
 | `http` | `http` | HTTP client (`ureq`) |
 | `hash` | `hash` | SHA-256 hashing (`sha2`) |
 | `llm` | `llm` | Chat completion — OpenAI, Anthropic, Ollama |
+| `schema` | `schema` | JSON Schema validation (`schema-bridge`) |
+| `sandbox` | `sandbox` | Capability-based filesystem sandbox (`cap-std`) |
+| `task` | `task` | Structured async tasks with cooperative cancellation (requires tokio) |
+| `sql` | `sql` | SQLite bridge via `rusqlite` + `spawn_blocking` |
+| `kv` | `kv` | SQLite-backed key-value store (namespace-scoped) |
 
-Default features: `json`, `env`, `path`, `time`.
+Default features: `json`, `env`, `path`, `time`, `string`, `validate`.
 Enable everything: `full`.
 
 ## Quick start
 
 ```toml
 [dependencies]
-mlua-batteries = "0.1"
+mlua-batteries = "0.3"
 ```
 
 ```rust
@@ -62,7 +73,7 @@ The default configuration uses `Unrestricted` policies — Lua scripts can acces
 
 ```toml
 [dependencies]
-mlua-batteries = { version = "0.1", features = ["full"] }
+mlua-batteries = { version = "0.3", features = ["full"] }
 ```
 
 ```rust
@@ -114,6 +125,22 @@ local results = std.llm.batch({
 ```
 
 Custom providers can be registered via `mlua_batteries::llm::register_provider`.
+
+## Async modules
+
+`task`, `sql`, and `kv` are async-first and require a `tokio` current-thread runtime driving a `LocalSet`. They are **not** part of the default feature set — opt in explicitly.
+
+```toml
+[dependencies]
+mlua-batteries = { version = "0.3", features = ["task", "sql", "kv"] }
+tokio = { version = "1", features = ["rt", "macros"] }
+```
+
+- `task` provides structured concurrency primitives (`spawn`, `scope`, `with_timeout`, `sleep`, `checkpoint`) with cooperative, level-triggered cancellation. `with_timeout` applies a 3-stage graceful-abort pattern (deadline → drain under `grace_ms` → hard-abort).
+- `sql` is a SQLite bridge over `rusqlite` + `spawn_blocking`. The host owns the `rusqlite::Connection` and `InterruptHandle`; cancel integrates with the enclosing scope via `sqlite3_interrupt`.
+- `kv` is a namespace-scoped key-value store backed by a SQLite table on a host-supplied connection. Durability and atomicity come from SQLite's WAL journal.
+
+See the module-level rustdoc on `src/task/mod.rs`, `src/sql.rs`, and `src/kv.rs` for the full API and wiring contract.
 
 ## Configuration
 

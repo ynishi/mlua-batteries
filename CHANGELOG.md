@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-17
+
+### Added
+- `std.task`: Structured async task primitives for Lua scripts (feature `task`).
+  Requires a `tokio` current-thread runtime driving a `LocalSet` (mlua-isle's
+  `AsyncIsle` satisfies this).
+  - `spawn`, `scope`, `with_timeout`, `sleep`, `yield`, `checkpoint`,
+    `cancel_token`, `current`.
+  - `Scope`, `Handle`, `CancelToken` userdata.
+  - Cooperative + level-triggered cancellation (Trio model) at every
+    `std.task.*` suspension point, including the `coroutine` driver.
+  - 3-stage graceful abort in `with_timeout` (deadline → drain under
+    `grace_ms` → hard-abort via tokio `AbortHandle`).
+  - `TaskConfig` for host-tunable defaults (`default_driver`, `grace_ms`);
+    no env-var reads inside the crate.
+- `std.sql`: SQLite bridge built on `rusqlite` + `tokio::task::spawn_blocking`
+  (feature `sql`, implies `task` + `json`).
+  - `query(sql, params?) -> rows`, `exec(sql, params?) -> {affected, last_id}`,
+    `std.sql.null` sentinel for SQL NULL.
+  - Host owns the `rusqlite::Connection` and `InterruptHandle`; on cancel the
+    crate calls `sqlite3_interrupt` so the blocking thread returns promptly.
+  - Per-query timeout via `SqlConfig::query_timeout`; integrates with the
+    enclosing `task.scope` / `task.with_timeout` cancel token.
+- `std.kv`: SQLite-backed key-value store (feature `kv`, implies `sql`).
+  - `get` / `set` / `delete` / `list` scoped by namespace.
+  - Per-key updates (no whole-namespace rewrite); durability + atomicity via
+    SQLite WAL; cross-process writes arbitrated by `busy_timeout`.
+  - Shares `SqlConfig` (timeout + cancel) with `std.sql`; host supplies a
+    dedicated `Connection` for KV scratch state.
+
 ## [0.2.2] - 2026-04-14
 
 ### Fixed
@@ -61,7 +91,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Policy system with trait-based access control:
   `PathPolicy`, `HttpPolicy`, `EnvPolicy`, `LlmPolicy`.
 
-[Unreleased]: https://github.com/ynishi/mlua-batteries/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/ynishi/mlua-batteries/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ynishi/mlua-batteries/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/ynishi/mlua-batteries/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/ynishi/mlua-batteries/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ynishi/mlua-batteries/compare/v0.1.2...v0.2.0
