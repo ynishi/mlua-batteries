@@ -166,6 +166,7 @@ impl FsAccess {
 
     // ── I/O operations (crate-internal) ──────────────
 
+    #[cfg(feature = "fs")]
     pub(crate) fn file_size(&self) -> io::Result<u64> {
         match &self.0 {
             FsAccessInner::Direct(p) => Ok(std::fs::metadata(p)?.len()),

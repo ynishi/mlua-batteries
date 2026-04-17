@@ -72,6 +72,8 @@ pub mod hash;
 pub mod http;
 #[cfg(feature = "json")]
 pub mod json;
+#[cfg(feature = "kv")]
+pub mod kv;
 #[cfg(feature = "llm")]
 pub mod llm;
 #[cfg(feature = "log")]
@@ -82,8 +84,12 @@ pub mod path;
 pub mod regex;
 #[cfg(feature = "schema")]
 pub mod schema;
+#[cfg(feature = "sql")]
+pub mod sql;
 #[cfg(feature = "string")]
 pub mod string;
+#[cfg(feature = "task")]
+pub mod task;
 #[cfg(feature = "time")]
 pub mod time;
 #[cfg(feature = "uuid")]

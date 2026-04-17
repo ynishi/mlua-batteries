@@ -1,6 +1,6 @@
 [package]
 name = "mlua-batteries"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.77"
 description = "Batteries-included standard library modules for mlua"
@@ -30,7 +30,16 @@ llm = ["http", "json", "dep:secrecy"]
 hash = ["dep:sha2"]
 schema = ["validate", "dep:schema-bridge"]
 sandbox = ["dep:cap-std"]
-full = ["json", "env", "path", "time", "string", "regex", "validate", "log", "uuid", "base64", "fs", "http", "llm", "hash", "schema", "sandbox"]
+# Async / structured-concurrency primitives. Requires a tokio
+# current-thread runtime + LocalSet (mlua-isle's AsyncIsle satisfies this).
+task = ["dep:tokio", "dep:tracing", "mlua/async"]
+# SQLite bridge built on rusqlite + spawn_blocking. Depends on `task` for
+# cooperative cancellation through the enclosing scope's CancelToken.
+sql = ["task", "json", "dep:rusqlite"]
+# SQLite-backed key-value store. Reuses the sql bridge's connection
+# locking + race_timeout helpers; supply a dedicated rusqlite::Connection.
+kv = ["sql"]
+full = ["json", "env", "path", "time", "string", "regex", "validate", "log", "uuid", "base64", "fs", "http", "llm", "hash", "schema", "sandbox", "task", "sql", "kv"]
 
 [dependencies]
 mlua = { version = "0.11", features = ["lua54", "vendored"] }
@@ -48,6 +57,11 @@ sha2 = { version = "0.10", optional = true }
 secrecy = { version = "0.10", optional = true }
 schema-bridge = { version = "0.4.0", features = ["mlua"], optional = true }
 cap-std = { version = "4", optional = true }
+tokio = { version = "1", features = ["rt", "time", "sync", "macros"], optional = true }
+tracing = { version = "0.1", optional = true }
+rusqlite = { version = "0.31", optional = true }
 
 [dev-dependencies]
 proptest = "1"
+tokio = { version = "1", features = ["full"] }
+rusqlite = { version = "0.31", features = ["bundled"] }

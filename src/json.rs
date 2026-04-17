@@ -381,8 +381,7 @@ mod tests {
         ));
         lua.globals().set("_ud", ud).unwrap();
 
-        let result: mlua::Result<String> =
-            lua.load(r#"return std.json.encode(_ud)"#).eval();
+        let result: mlua::Result<String> = lua.load(r#"return std.json.encode(_ud)"#).eval();
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -401,7 +400,7 @@ mod tests {
         crate::register_all(&lua, "std").unwrap();
 
         let s: String = lua
-            .load(&format!(
+            .load(format!(
                 r#"
                 std.json.write_file("{path_str}", {{name = "test", ok = true}})
                 local t = std.json.read_file("{path_str}")
