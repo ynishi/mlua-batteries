@@ -412,6 +412,43 @@ impl FsAccess {
         }
     }
 
+    /// Create a POSIX symlink pointing from `self` (the link path) to `target`.
+    ///
+    /// Wraps [`std::os::unix::fs::symlink`] for the `Direct` variant.
+    /// `target` is used verbatim — no policy check is performed on it,
+    /// and no existence validation is done (dangling symlinks are allowed,
+    /// per POSIX `symlink(2)`).
+    ///
+    /// When the `sandbox` feature is enabled the link path must reside under
+    /// the sandbox root; the `target` string is still passed through unchanged.
+    /// If `cap_std::fs::Dir::symlink` is unavailable at runtime the call
+    /// returns `io::ErrorKind::Unsupported`.
+    ///
+    /// Available when the `fs` feature is enabled on Unix targets.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` — The destination the symlink will point to (not policy-checked).
+    ///
+    /// # Errors
+    ///
+    /// Returns `io::Error` on OS failure (e.g. `EEXIST` if the link already exists).
+    #[cfg(all(feature = "fs", unix))]
+    pub(crate) fn symlink_to(&self, target: &Path) -> io::Result<()> {
+        match &self.0 {
+            FsAccessInner::Direct(linkpath) => std::os::unix::fs::symlink(target, linkpath),
+            #[cfg(feature = "sandbox")]
+            FsAccessInner::Capped { dir, relative } => {
+                dir.symlink(target, relative).or_else(|_| {
+                    Err(io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        "symlink in sandbox not supported",
+                    ))
+                })
+            }
+        }
+    }
+
     /// Copy this file's contents to `dst`.
     ///
     /// Available when the `fs` feature is enabled.
