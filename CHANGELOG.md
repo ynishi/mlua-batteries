@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `std.fs.rename(src, dst)`: atomic rename via POSIX `rename(2)` (feature `fs`).
+- `std.fs.symlink(target, linkpath)`: create a POSIX symlink via `symlink(2)`; dangling targets are allowed (feature `fs`, Unix only).
 
 ## [0.3.0] - 2026-04-17
 
