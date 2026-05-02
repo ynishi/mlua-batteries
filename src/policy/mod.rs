@@ -369,6 +369,49 @@ impl FsAccess {
         self.walk_files_filtered(display_prefix, &|_| true, max_depth, max_entries)
     }
 
+    /// Rename (move) this path to `dst`.
+    ///
+    /// Wraps [`std::fs::rename`] for the `Direct` variant.
+    /// On the same filesystem this is atomic (POSIX `rename(2)`).
+    ///
+    /// When the `sandbox` feature is enabled:
+    /// - Both paths must live under the **same** sandbox root.
+    /// - If they span different roots, `io::ErrorKind::Unsupported` is
+    ///   returned — atomic cross-root rename cannot be guaranteed.
+    ///
+    /// Available when the `fs` feature is enabled.
+    #[cfg(feature = "fs")]
+    pub(crate) fn rename_to(&self, dst: &FsAccess) -> io::Result<()> {
+        match (&self.0, &dst.0) {
+            (FsAccessInner::Direct(src), FsAccessInner::Direct(d)) => std::fs::rename(src, d),
+            #[cfg(feature = "sandbox")]
+            (
+                FsAccessInner::Capped {
+                    dir: src_dir,
+                    relative: src_rel,
+                },
+                FsAccessInner::Capped {
+                    dir: dst_dir,
+                    relative: dst_rel,
+                },
+            ) => {
+                if Arc::ptr_eq(src_dir, dst_dir) {
+                    src_dir.rename(src_rel, dst_dir, dst_rel)
+                } else {
+                    Err(io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        "rename across different sandbox roots is not supported",
+                    ))
+                }
+            }
+            #[cfg(feature = "sandbox")]
+            _ => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "rename between Direct and Capped paths is not supported",
+            )),
+        }
+    }
+
     /// Copy this file's contents to `dst`.
     ///
     /// Available when the `fs` feature is enabled.

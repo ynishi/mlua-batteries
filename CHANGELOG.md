@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `std.fs.rename(src, dst)`: atomic rename via POSIX `rename(2)` (feature `fs`).
+
 ## [0.3.0] - 2026-04-17
 
 ### Added

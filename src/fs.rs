@@ -138,6 +138,18 @@ pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
     )?;
 
     t.set(
+        "rename",
+        lua.create_function(|lua, (src, dst): (String, String)| {
+            let src_access = check_path(lua, &src, PathOp::Delete)?;
+            let dst_access = check_path(lua, &dst, PathOp::Write)?;
+            src_access
+                .rename_to(&dst_access)
+                .map_err(LuaError::external)?;
+            Ok(true)
+        })?,
+    )?;
+
+    t.set(
         "exists",
         lua.create_function(|lua, path: String| {
             let access = check_path(lua, &path, PathOp::Read)?;
@@ -347,6 +359,33 @@ mod tests {
         "#
         ));
         assert_eq!(s, "copy me");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_file() {
+        let dir = std::env::temp_dir().join("mlua_bat_test_fs_rename");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("a.txt");
+        let dst = dir.join("b.txt");
+        std::fs::write(&src, "rename me").unwrap();
+        let src_str = src.to_string_lossy();
+        let dst_str = dst.to_string_lossy();
+
+        // After rename: src gone, dst exists with original content.
+        let s: String = eval(&format!(
+            r#"
+            std.fs.rename("{src_str}", "{dst_str}")
+            return std.fs.read("{dst_str}")
+        "#
+        ));
+        assert_eq!(s, "rename me");
+        assert!(
+            !src.exists(),
+            "source path should no longer exist after rename"
+        );
+        assert!(dst.exists(), "destination path should exist after rename");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -620,6 +659,69 @@ mod tests {
 
         // Glob pattern pointing outside sandbox should fail at base_dir resolution
         let result: mlua::Result<mlua::Value> = lua.load(r#"return std.fs.glob("/etc/*")"#).eval();
+        assert!(result.is_err());
+
+        let _ = std::fs::remove_dir_all(&sandbox_dir);
+    }
+
+    #[cfg(feature = "sandbox")]
+    #[test]
+    fn sandboxed_rename_within_sandbox() {
+        let lua = Lua::new();
+        let sandbox_dir = std::env::temp_dir().join("mlua_bat_test_sandbox_rename");
+        let _ = std::fs::remove_dir_all(&sandbox_dir);
+        std::fs::create_dir_all(&sandbox_dir).unwrap();
+        let src = sandbox_dir.join("a.txt");
+        let dst = sandbox_dir.join("b.txt");
+        std::fs::write(&src, "sandboxed rename").unwrap();
+        let src_str = src.to_string_lossy().to_string();
+        let dst_str = dst.to_string_lossy().to_string();
+
+        let config = crate::config::Config::builder()
+            .path_policy(crate::policy::Sandboxed::new([&sandbox_dir]).unwrap())
+            .build()
+            .unwrap();
+        crate::register_all_with(&lua, "std", config).unwrap();
+
+        let result: mlua::Result<bool> = lua
+            .load(&format!(
+                r#"return std.fs.rename("{src_str}", "{dst_str}")"#
+            ))
+            .eval();
+        assert!(result.is_ok());
+        assert!(!src.exists());
+        assert!(dst.exists());
+
+        let _ = std::fs::remove_dir_all(&sandbox_dir);
+    }
+
+    #[cfg(feature = "sandbox")]
+    #[test]
+    fn sandboxed_rename_blocks_outside_dst() {
+        let lua = Lua::new();
+        let sandbox_dir = std::env::temp_dir().join("mlua_bat_test_sandbox_rename_block");
+        let _ = std::fs::remove_dir_all(&sandbox_dir);
+        std::fs::create_dir_all(&sandbox_dir).unwrap();
+        let src = sandbox_dir.join("a.txt");
+        std::fs::write(&src, "x").unwrap();
+        let src_str = src.to_string_lossy().to_string();
+        // Destination is outside the sandbox.
+        let outside_dst = std::env::temp_dir()
+            .join("mlua_bat_test_sandbox_rename_block_outside")
+            .join("b.txt");
+        let outside_str = outside_dst.to_string_lossy().to_string();
+
+        let config = crate::config::Config::builder()
+            .path_policy(crate::policy::Sandboxed::new([&sandbox_dir]).unwrap())
+            .build()
+            .unwrap();
+        crate::register_all_with(&lua, "std", config).unwrap();
+
+        let result: mlua::Result<mlua::Value> = lua
+            .load(&format!(
+                r#"return std.fs.rename("{src_str}", "{outside_str}")"#
+            ))
+            .eval();
         assert!(result.is_err());
 
         let _ = std::fs::remove_dir_all(&sandbox_dir);
