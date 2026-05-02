@@ -20,7 +20,7 @@ Core modules (`json`, `env`, `path`, `time`, `fs`, `http`, `hash`, `llm`, `strin
 | `log` | `log` | Bridge to the host's `log` facade |
 | `uuid` | `uuid` | UUID v4 / v7 generation |
 | `base64` | `base64` | Base64 encode / decode |
-| `fs` | `fs` | File I/O, `walk`, `glob` (`walkdir` + `globset`) |
+| `fs` | `fs` | File I/O, `walk`, `glob`, `rename` (`walkdir` + `globset`) |
 | `http` | `http` | HTTP client (`ureq`) |
 | `hash` | `hash` | SHA-256 hashing (`sha2`) |
 | `llm` | `llm` | Chat completion — OpenAI, Anthropic, Ollama |
