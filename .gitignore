@@ -1,5 +1,7 @@
-/target
+target
 Cargo.lock
 workspace
+.worktrees
 .claude
 .mcp.json
+.ryo
