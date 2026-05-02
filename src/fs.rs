@@ -149,6 +149,18 @@ pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
         })?,
     )?;
 
+    #[cfg(unix)]
+    t.set(
+        "symlink",
+        lua.create_function(|lua, (target, linkpath): (String, String)| {
+            let link_access = check_path(lua, &linkpath, PathOp::Write)?;
+            link_access
+                .symlink_to(std::path::Path::new(&target))
+                .map_err(LuaError::external)?;
+            Ok(true)
+        })?,
+    )?;
+
     t.set(
         "exists",
         lua.create_function(|lua, path: String| {
@@ -1096,5 +1108,98 @@ mod tests {
             .load(r#"return std.fs.remove("/tmp/__mlua_bat_remove_nonexistent__")"#)
             .eval();
         assert!(result.is_err());
+    }
+
+    // ─── symlink tests ────────────────────────────────────────
+
+    /// T1 (happy path): symlink pointing at an existing file resolves correctly.
+    #[cfg(unix)]
+    #[test]
+    fn symlink_file() {
+        let dir = std::env::temp_dir().join("mlua_bat_test_fs_symlink");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("target.txt");
+        let link = dir.join("link.txt");
+        std::fs::write(&target, "symlink target").unwrap();
+        let target_str = target.to_string_lossy().to_string();
+        let link_str = link.to_string_lossy().to_string();
+
+        let b: bool = eval(&format!(
+            r#"
+            std.fs.symlink("{target_str}", "{link_str}")
+            return std.fs.exists("{link_str}")
+        "#
+        ));
+        assert!(b, "symlink path should exist");
+        // Verify the symlink points to the correct target using std::fs::read_link.
+        // SAFETY: read_link is used only in test code to verify invariants.
+        let resolved = std::fs::read_link(&link).unwrap();
+        assert_eq!(resolved, target.as_path());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// T2 (edge case): dangling symlink (target does not exist) is allowed per POSIX.
+    #[cfg(unix)]
+    #[test]
+    fn symlink_dangling() {
+        let dir = std::env::temp_dir().join("mlua_bat_test_fs_symlink_dangling");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let nonexistent_target = dir.join("ghost.txt").to_string_lossy().to_string();
+        let link = dir.join("dangling_link.txt");
+        let link_str = link.to_string_lossy().to_string();
+
+        // symlink to a non-existent target should succeed (dangling symlink allowed).
+        let b: bool = eval(&format!(
+            r#"
+            return std.fs.symlink("{nonexistent_target}", "{link_str}")
+        "#
+        ));
+        assert!(
+            b,
+            "symlink creation should succeed even for dangling targets"
+        );
+        // The link entry itself must exist in the filesystem.
+        // SAFETY: symlink_metadata used only in tests to check link presence.
+        assert!(
+            link.symlink_metadata().is_ok(),
+            "dangling symlink entry should be present on disk"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// T3 (error path): sandbox rejects symlink creation outside the sandbox root.
+    #[cfg(all(unix, feature = "sandbox"))]
+    #[test]
+    fn sandboxed_symlink_blocks_outside() {
+        let lua = Lua::new();
+        let sandbox_dir = std::env::temp_dir().join("mlua_bat_test_sandbox_symlink_block");
+        let _ = std::fs::remove_dir_all(&sandbox_dir);
+        std::fs::create_dir_all(&sandbox_dir).unwrap();
+        // Target inside sandbox (irrelevant for policy, but kept realistic).
+        let target_str = sandbox_dir.join("target.txt").to_string_lossy().to_string();
+        // Link path outside the sandbox — policy must deny this.
+        let outside_link = std::env::temp_dir()
+            .join("mlua_bat_test_sandbox_symlink_outside_link.txt")
+            .to_string_lossy()
+            .to_string();
+
+        let config = crate::config::Config::builder()
+            .path_policy(crate::policy::Sandboxed::new([&sandbox_dir]).unwrap())
+            .build()
+            .unwrap();
+        crate::register_all_with(&lua, "std", config).unwrap();
+
+        let result: mlua::Result<mlua::Value> = lua
+            .load(&format!(
+                r#"return std.fs.symlink("{target_str}", "{outside_link}")"#
+            ))
+            .eval();
+        assert!(
+            result.is_err(),
+            "symlink to outside sandbox should be denied"
+        );
+        let _ = std::fs::remove_dir_all(&sandbox_dir);
     }
 }
