@@ -26,6 +26,8 @@ Core modules (`json`, `env`, `path`, `time`, `fs`, `http`, `hash`, `llm`, `strin
 | `llm` | `llm` | Chat completion — OpenAI, Anthropic, Ollama |
 | `schema` | `schema` | JSON Schema validation (`schema-bridge`) |
 | `sandbox` | `sandbox` | Capability-based filesystem sandbox (`cap-std`) |
+| `proc` | `proc` | Typed argv pipeline spawn — no shell involved |
+| `watch` | `watch` | Filesystem versioning watcher — content-addressed store + JSONL journal (`notify`) |
 | `task` | `task` | Structured async tasks with cooperative cancellation (requires tokio) |
 | `sql` | `sql` | SQLite bridge via `rusqlite` + `spawn_blocking` |
 | `kv` | `kv` | SQLite-backed key-value store (namespace-scoped) |

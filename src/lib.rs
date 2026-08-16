@@ -80,6 +80,8 @@ pub mod llm;
 pub mod log;
 #[cfg(feature = "path")]
 pub mod path;
+#[cfg(feature = "proc")]
+pub mod proc;
 #[cfg(feature = "regex")]
 pub mod regex;
 #[cfg(feature = "schema")]
@@ -96,6 +98,8 @@ pub mod time;
 pub mod uuid;
 #[cfg(feature = "validate")]
 pub mod validate;
+#[cfg(feature = "watch")]
+pub mod watch;
 
 pub(crate) mod util;
 
@@ -159,6 +163,8 @@ pub fn register_all_with(lua: &Lua, namespace: &str, config: Config) -> LuaResul
     register!("llm", llm);
     register!("hash", hash);
     register!("schema", schema);
+    register!("proc", proc);
+    register!("watch", watch);
 
     lua.globals().set(namespace, ns.clone())?;
     Ok(ns)
@@ -208,6 +214,8 @@ pub fn module_entries() -> Vec<(&'static str, ModuleFactory)> {
     entry!("llm", llm);
     entry!("hash", hash);
     entry!("schema", schema);
+    entry!("proc", proc);
+    entry!("watch", watch);
 
     entries
 }

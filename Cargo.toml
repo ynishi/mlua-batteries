@@ -30,6 +30,11 @@ llm = ["http", "json", "dep:secrecy"]
 hash = ["dep:sha2"]
 schema = ["validate", "dep:schema-bridge"]
 sandbox = ["dep:cap-std"]
+# Typed argv pipeline spawn (no shell involved). std-only, no extra deps.
+proc = []
+# Filesystem versioning watcher: content-addressed blob store + JSONL
+# journal driven by the `notify` crate.
+watch = ["dep:notify", "dep:sha2", "dep:serde_json", "dep:tracing"]
 # Async / structured-concurrency primitives. Requires a tokio
 # current-thread runtime + LocalSet (mlua-isle's AsyncIsle satisfies this).
 task = ["dep:tokio", "dep:tracing", "mlua/async"]
@@ -39,7 +44,7 @@ sql = ["task", "json", "dep:rusqlite"]
 # SQLite-backed key-value store. Reuses the sql bridge's connection
 # locking + race_timeout helpers; supply a dedicated rusqlite::Connection.
 kv = ["sql"]
-full = ["json", "env", "path", "time", "string", "regex", "validate", "log", "uuid", "base64", "fs", "http", "llm", "hash", "schema", "sandbox", "task", "sql", "kv"]
+full = ["json", "env", "path", "time", "string", "regex", "validate", "log", "uuid", "base64", "fs", "http", "llm", "hash", "schema", "sandbox", "proc", "watch", "task", "sql", "kv"]
 
 [dependencies]
 mlua = { version = "0.11", features = ["lua54", "vendored"] }
@@ -54,6 +59,7 @@ log = { version = "0.4", optional = true }
 uuid = { version = "1", features = ["v4", "v7"], optional = true }
 base64 = { version = "0.22", optional = true }
 sha2 = { version = "0.10", optional = true }
+notify = { version = "8", optional = true }
 secrecy = { version = "0.10", optional = true }
 schema-bridge = { version = "0.4.0", features = ["mlua"], optional = true }
 cap-std = { version = "4", optional = true }
