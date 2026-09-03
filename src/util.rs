@@ -92,7 +92,10 @@ pub(crate) enum TableKind {
 ///
 /// **Consequence:** an empty table (`raw_len() == 0`) is always
 /// classified as `Map` with zero pairs. This means `json.encode({})`
-/// produces `{}` (object), not `[]` (array).
+/// produces `{}` (object), not `[]` (array).  The JSON encoder layers a
+/// metatable tag on top of this for empty tables only — see the
+/// `__jsontype` section of the `json` module docs — so an empty table can
+/// still be encoded as `[]` when it asks for it.
 ///
 /// # Performance
 ///

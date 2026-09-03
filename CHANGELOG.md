@@ -10,6 +10,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `std.fs.rename(src, dst)`: atomic rename via POSIX `rename(2)` (feature `fs`).
 - `std.fs.symlink(target, linkpath)`: create a POSIX symlink via `symlink(2)`; dangling targets are allowed (feature `fs`, Unix only).
+- `json.encode` honours the `dkjson`-style `__jsontype` metatable tag on
+  **empty** tables: `setmetatable({}, {__jsontype = "array"})` encodes as
+  `[]`, and `__jsontype = "object"` states the default (`{}`) explicitly.
+  An empty table carrying the metatable mlua's serde bridge attaches to
+  sequences (single entry `__metatable = false`) also encodes as `[]`.
+  Tables with contents are classified by their contents as before — the tag
+  cannot turn a map into an array or vice versa.
+- `json.array()`: returns a fresh empty table tagged as a JSON array, so
+  scripts can produce `[]` without writing the `setmetatable` boilerplate.
+- The same tag is honoured by the NULL-preserving converters behind
+  `std.sql` / `std.kv`, sharing the metatable instance with `std.json`, so a
+  value stored with `kv.set` and read back with `kv.get` keeps its empty
+  arrays instead of turning them into `{}` (features `sql` / `kv`).  SQL NULL
+  handling (`std.sql.null`) is unchanged.
+- The list-shaped returns of those bridges are tagged when empty for the same
+  reason: a zero-row `sql.query` result and an empty `kv.list` result now
+  encode as `[]`.  Non-empty results are returned untagged, as before.
+
+### Changed
+- `json.decode("[]")` now returns an empty table carrying the shared
+  `{__jsontype = "array"}` metatable (previously a bare table), closing the
+  round-trip: `json.encode(json.decode("[]")) == "[]"` where it used to
+  produce `"{}"`.  This applies to empty arrays at any nesting depth.
+  The metatable is unprotected and carries no `__index` / `__newindex`, so
+  decoded values keep behaving like plain tables; code that asserts
+  `getmetatable(decoded) == nil` for an empty array is affected.
+  Non-empty arrays are returned untagged, as before.
+- `kv.get` likewise returns tagged tables for empty arrays stored in the
+  value, and `sql.query` / `kv.list` return a tagged table when the result is
+  empty; the same `getmetatable(...) == nil` caveat applies there.
 
 ## [0.3.0] - 2026-04-17
 

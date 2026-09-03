@@ -28,6 +28,15 @@ fn make_lua() -> Lua {
     lua
 }
 
+/// Like [`make_lua`], but with the regular `std.*` modules registered so the
+/// test can use `std.json.encode` / `std.json.array` to inspect what the
+/// sql / kv bridges store and hand back.
+fn make_lua_with_std_modules() -> Lua {
+    let lua = Lua::new();
+    mlua_batteries::register_all(&lua, "std").expect("register_all");
+    lua
+}
+
 #[test]
 fn task_register_creates_std_task_table() {
     let lua = make_lua();
@@ -160,6 +169,84 @@ fn sql_null_sentinel_round_trip() {
 }
 
 #[test]
+fn sql_zero_row_result_encodes_as_array() {
+    // A query returning no rows is an empty *list*, not an empty object.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let local = LocalSet::new();
+
+    local.block_on(&rt, async {
+        let lua = make_lua_with_std_modules();
+        mlua_batteries::task::register(&lua).unwrap();
+        let (conn, interrupt) = open_in_memory_pair();
+        mlua_batteries::sql::register(&lua, conn, interrupt).unwrap();
+
+        let ok: bool = lua
+            .load(
+                r#"
+                std.sql.exec("CREATE TABLE t(x INTEGER)")
+
+                local empty = std.sql.query("SELECT x FROM t")
+                assert(#empty == 0, "expected zero rows")
+                local encoded = std.json.encode(empty)
+                assert(encoded == "[]", "zero-row result: " .. encoded)
+
+                std.sql.exec("INSERT INTO t(x) VALUES(1)")
+                local one = std.sql.query("SELECT x FROM t")
+                assert(#one == 1 and getmetatable(one) == nil, "non-empty result untagged")
+                assert(std.json.encode(one) == '[{"x":1}]', "non-empty result unchanged")
+                return true
+                "#,
+            )
+            .eval_async()
+            .await
+            .unwrap();
+        assert!(ok);
+    });
+}
+
+#[test]
+fn kv_empty_list_encodes_as_array() {
+    // Same for `kv.list`: an empty namespace — or a prefix that matches
+    // nothing — must encode as `[]`.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let local = LocalSet::new();
+
+    local.block_on(&rt, async {
+        let lua = make_lua_with_std_modules();
+        mlua_batteries::task::register(&lua).unwrap();
+        let (conn, interrupt) = open_in_memory_pair();
+        mlua_batteries::kv::register(&lua, conn, interrupt).unwrap();
+
+        let ok: bool = lua
+            .load(
+                r#"
+                local empty = std.json.encode(std.kv.list("emptyns"))
+                assert(empty == "[]", "empty namespace: " .. empty)
+
+                std.kv.set("ns1", "alpha", 1)
+                local no_match = std.json.encode(std.kv.list("ns1", "zzz"))
+                assert(no_match == "[]", "no prefix match: " .. no_match)
+
+                local hit = std.kv.list("ns1", "al")
+                assert(#hit == 1 and getmetatable(hit) == nil, "non-empty list untagged")
+                assert(std.json.encode(hit) == '["alpha"]', "non-empty list unchanged")
+                return true
+                "#,
+            )
+            .eval_async()
+            .await
+            .unwrap();
+        assert!(ok);
+    });
+}
+
+#[test]
 fn kv_set_get_list_delete() {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -186,6 +273,120 @@ fn kv_set_get_list_delete() {
                 local removed = std.kv.delete("ns1", "a")
                 assert(removed == true, "delete returns true")
                 assert(std.kv.get("ns1", "a") == nil, "deleted a is nil")
+                return true
+                "#,
+            )
+            .eval_async()
+            .await
+            .unwrap();
+        assert!(ok);
+    });
+}
+
+#[test]
+fn kv_preserves_empty_array_round_trip() {
+    // `std.kv` serializes through the NULL-preserving converters in
+    // `crate::sql`.  An empty array must survive set → get → re-encode as
+    // `[]`, not degrade into `{}`.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let local = LocalSet::new();
+
+    local.block_on(&rt, async {
+        let lua = make_lua_with_std_modules();
+        mlua_batteries::task::register(&lua).unwrap();
+        let (conn, interrupt) = open_in_memory_pair();
+        mlua_batteries::kv::register(&lua, conn, interrupt).unwrap();
+
+        let ok: bool = lua
+            .load(
+                r#"
+                std.kv.set("ns1", "top", std.json.array())
+                std.kv.set("ns1", "nested", {items = std.json.array(), name = "x"})
+
+                local top = std.json.encode(std.kv.get("ns1", "top"))
+                assert(top == "[]", "top-level empty array: " .. top)
+
+                local nested = std.json.encode(std.kv.get("ns1", "nested"))
+                assert(nested == '{"items":[],"name":"x"}', "nested: " .. nested)
+
+                -- The tag metatable is the one `std.json` hands out, so both
+                -- bridges agree on the convention.
+                assert(getmetatable(std.kv.get("ns1", "top"))
+                       == getmetatable(std.json.array()), "metatable identity")
+                return true
+                "#,
+            )
+            .eval_async()
+            .await
+            .unwrap();
+        assert!(ok);
+    });
+}
+
+#[test]
+fn kv_empty_table_still_round_trips_as_object() {
+    // Guardrail for the change above: an *untagged* empty table keeps its
+    // previous meaning (JSON object).
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let local = LocalSet::new();
+
+    local.block_on(&rt, async {
+        let lua = make_lua_with_std_modules();
+        mlua_batteries::task::register(&lua).unwrap();
+        let (conn, interrupt) = open_in_memory_pair();
+        mlua_batteries::kv::register(&lua, conn, interrupt).unwrap();
+
+        let ok: bool = lua
+            .load(
+                r#"
+                std.kv.set("ns1", "obj", {})
+                local encoded = std.json.encode(std.kv.get("ns1", "obj"))
+                assert(encoded == "{}", "untagged empty table: " .. encoded)
+
+                std.kv.set("ns1", "list", {1, 2, 3})
+                local list = std.kv.get("ns1", "list")
+                assert(#list == 3 and getmetatable(list) == nil, "non-empty array untouched")
+                return true
+                "#,
+            )
+            .eval_async()
+            .await
+            .unwrap();
+        assert!(ok);
+    });
+}
+
+#[test]
+fn kv_null_sentinel_and_empty_array_coexist() {
+    // The empty-array branch was added to the NULL-preserving converters —
+    // verify the NULL sentinel still round-trips alongside it.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let local = LocalSet::new();
+
+    local.block_on(&rt, async {
+        let lua = make_lua_with_std_modules();
+        mlua_batteries::task::register(&lua).unwrap();
+        let (conn, interrupt) = open_in_memory_pair();
+        mlua_batteries::sql::register(&lua, Arc::clone(&conn), Arc::clone(&interrupt)).unwrap();
+        mlua_batteries::kv::register(&lua, conn, interrupt).unwrap();
+
+        let ok: bool = lua
+            .load(
+                r#"
+                std.kv.set("ns1", "mix", {flag = std.sql.null, items = std.json.array()})
+                local v = std.kv.get("ns1", "mix")
+                assert(v.flag == std.sql.null, "NULL sentinel lost")
+                local encoded = std.json.encode(v)
+                assert(encoded == '{"flag":null,"items":[]}', "mixed value: " .. encoded)
                 return true
                 "#,
             )
