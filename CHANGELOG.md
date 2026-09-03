@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-03
+
 ### Added
+- `std.proc`: typed pipeline spawn (feature `proc`).
+- `std.watch`: versioning file watcher (feature `watch`).
 - `std.fs.rename(src, dst)`: atomic rename via POSIX `rename(2)` (feature `fs`).
 - `std.fs.symlink(target, linkpath)`: create a POSIX symlink via `symlink(2)`; dangling targets are allowed (feature `fs`, Unix only).
 - `json.encode` honours the `dkjson`-style `__jsontype` metatable tag on
