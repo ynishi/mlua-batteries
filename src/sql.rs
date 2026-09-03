@@ -360,11 +360,15 @@ fn run_exec(conn: &Connection, sql: &str, params: &[Value]) -> Result<(usize, i6
 /// (exposed to Lua as `std.sql.null`), which keeps the column present in
 /// the row table.  This preserves the distinction between "column is NULL"
 /// and "column was not in the query".
+///
+/// A zero-row result carries the shared `__jsontype = "array"` metatable so
+/// that `json.encode(rows)` renders `[]` rather than `{}`.
 pub(crate) fn rows_to_lua(
     lua: &Lua,
     rows: Vec<Map<String, serde_json::Value>>,
 ) -> LuaResult<LuaValue> {
     let arr = lua.create_table()?;
+    let row_count = rows.len();
     for (i, row_map) in rows.into_iter().enumerate() {
         let row_tbl = lua.create_table()?;
         for (col, val) in row_map {
@@ -372,6 +376,9 @@ pub(crate) fn rows_to_lua(
             row_tbl.set(col.as_str(), lua_val)?;
         }
         arr.set(i + 1, row_tbl)?;
+    }
+    if row_count == 0 {
+        arr.set_metatable(Some(crate::json::array_metatable(lua)?))?;
     }
     Ok(LuaValue::Table(arr))
 }
@@ -419,6 +426,12 @@ fn json_to_lua_inner(lua: &Lua, val: &serde_json::Value, depth: usize) -> LuaRes
             let table = lua.create_table()?;
             for (i, v) in arr.iter().enumerate() {
                 table.set(i + 1, json_to_lua_inner(lua, v, depth + 1)?)?;
+            }
+            if arr.is_empty() {
+                // Same `__jsontype = "array"` tag (and the same metatable
+                // instance) that `crate::json` uses, so an empty array read
+                // back out of sql / kv re-encodes as `[]` rather than `{}`.
+                table.set_metatable(Some(crate::json::array_metatable(lua)?))?;
             }
             Ok(LuaValue::Table(table))
         }
@@ -476,6 +489,12 @@ fn lua_to_json_inner(val: &LuaValue, depth: usize) -> LuaResult<serde_json::Valu
                         }
                     };
                     map.insert(key, lua_to_json_inner(&v, depth + 1)?);
+                }
+                if map.is_empty() && crate::json::wants_empty_array(t)? {
+                    // Empty table asking to be an array (`__jsontype` tag or
+                    // mlua's serde array metatable) — same rule as
+                    // `crate::json`.  Tables with entries never get here.
+                    return Ok(serde_json::Value::Array(Vec::new()));
                 }
                 Ok(serde_json::Value::Object(map))
             }

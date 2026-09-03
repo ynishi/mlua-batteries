@@ -239,6 +239,12 @@ pub fn register_with(
                             idx += 1;
                         }
                     }
+                    if idx == 1 {
+                        // Nothing matched: tag the empty list with the shared
+                        // `__jsontype = "array"` metatable so that
+                        // `json.encode(kv.list(...))` renders `[]`, not `{}`.
+                        tbl.set_metatable(Some(crate::json::array_metatable(&lua)?))?;
+                    }
                     Ok(LuaValue::Table(tbl))
                 }
             })?,
