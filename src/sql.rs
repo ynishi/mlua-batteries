@@ -133,11 +133,10 @@ pub fn register_with(lua: &Lua, isle: AsyncIsle, cfg: SqlConfig) -> LuaResult<()
                 async move {
                     let params_vec = params_result?.unwrap_or_default();
                     let timeout = sql_query_timeout(&lua);
-                    let (affected, last_id) =
-                        run_job(&isle, timeout, "sql.exec", move |conn| {
-                            Ok(run_exec(conn, &sql, &params_vec))
-                        })
-                        .await?;
+                    let (affected, last_id) = run_job(&isle, timeout, "sql.exec", move |conn| {
+                        Ok(run_exec(conn, &sql, &params_vec))
+                    })
+                    .await?;
 
                     let result_tbl = lua.create_table()?;
                     result_tbl.set("affected", affected as i64)?;
