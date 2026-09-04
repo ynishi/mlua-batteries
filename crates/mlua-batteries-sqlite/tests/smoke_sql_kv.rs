@@ -1,20 +1,17 @@
-//! Smoke tests for the `task` / `sql` / `kv` features.
+//! Smoke tests for the `std.sql` / `std.kv` bridges.
 //!
-//! These are intentionally minimal — full end-to-end coverage lives in
-//! the host crate (`agent-block`).  Here we only verify that:
+//! Intentionally minimal — full end-to-end coverage lives in the host crate.
+//! Here we only verify that:
 //!   - `register*` succeeds and creates the expected `std.*` tables
 //!   - the basic happy-path round trip works for each bridge
-//!   - the cross-bridge wiring (sql cancellation under task) compiles
-//!     and links
-
-#![cfg(all(feature = "task", feature = "sql", feature = "kv"))]
+//!   - the cross-bridge wiring (sql cancellation under task) compiles and links
 
 use mlua::prelude::*;
 use tokio::task::LocalSet;
 
-// The active track's `rusqlite-isle`, reached through the crate so the test
-// does not need a dev-dependency pinned to one cluster.
-use mlua_batteries::sqlite_backend::rusqlite_isle::{AsyncIsle, AsyncIsleDriver};
+// This crate's `rusqlite-isle`, reached through the re-export so the test does
+// not need a dependency of its own that could drift onto another cluster.
+use mlua_batteries_sqlite::rusqlite_isle::{AsyncIsle, AsyncIsleDriver};
 
 /// An in-memory isle plus its driver.  The driver must stay alive for as long
 /// as the handle is used — dropping it tears the connection thread down.
@@ -41,74 +38,6 @@ fn make_lua_with_std_modules() -> Lua {
 }
 
 #[test]
-fn task_register_creates_std_task_table() {
-    let lua = make_lua();
-    mlua_batteries::task::register(&lua).expect("task::register");
-
-    // Verify the table exists and the expected callables are present.
-    let probe = lua
-        .load(
-            r#"
-            assert(type(std.task) == "table", "std.task missing")
-            for _, fn_name in ipairs({
-                "spawn", "sleep", "yield", "checkpoint",
-                "cancel_token", "current", "scope", "with_timeout",
-            }) do
-                assert(type(std.task[fn_name]) == "function",
-                       "std.task." .. fn_name .. " missing")
-            end
-            return true
-            "#,
-        )
-        .eval::<bool>();
-
-    assert!(matches!(probe, Ok(true)), "probe failed: {probe:?}");
-}
-
-#[test]
-fn task_sleep_and_current_inside_localset() {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let local = LocalSet::new();
-
-    local.block_on(&rt, async {
-        let lua = make_lua();
-        mlua_batteries::task::register(&lua).unwrap();
-
-        // Sleep for 1 ms, then verify std.task.current() returns nil at the
-        // top level (we are not inside a spawned task here).
-        let outside = lua
-            .load(
-                r#"
-                std.task.sleep(1)
-                return std.task.current()
-                "#,
-            )
-            .eval_async::<LuaValue>()
-            .await
-            .unwrap();
-        assert!(matches!(outside, LuaValue::Nil));
-
-        // Inside a spawned task, current() must return a non-nil table.
-        let inside_id: String = lua
-            .load(
-                r#"
-                local h = std.task.spawn(function()
-                    return std.task.current().id
-                end)
-                return h:join()
-                "#,
-            )
-            .eval_async()
-            .await
-            .unwrap();
-        assert!(inside_id.starts_with('t'), "unexpected id: {inside_id}");
-    });
-}
-
-#[test]
 fn sql_query_and_exec_round_trip() {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -120,7 +49,7 @@ fn sql_query_and_exec_round_trip() {
         let lua = make_lua();
         mlua_batteries::task::register(&lua).unwrap();
         let (isle, _driver) = open_isle().await;
-        mlua_batteries::sql::register(&lua, isle).unwrap();
+        mlua_batteries_sqlite::sql::register(&lua, isle).unwrap();
 
         let result: i64 = lua
             .load(
@@ -153,7 +82,7 @@ fn sql_null_sentinel_round_trip() {
         let lua = make_lua();
         mlua_batteries::task::register(&lua).unwrap();
         let (isle, _driver) = open_isle().await;
-        mlua_batteries::sql::register(&lua, isle).unwrap();
+        mlua_batteries_sqlite::sql::register(&lua, isle).unwrap();
 
         let is_null: bool = lua
             .load(
@@ -184,7 +113,7 @@ fn sql_zero_row_result_encodes_as_array() {
         let lua = make_lua_with_std_modules();
         mlua_batteries::task::register(&lua).unwrap();
         let (isle, _driver) = open_isle().await;
-        mlua_batteries::sql::register(&lua, isle).unwrap();
+        mlua_batteries_sqlite::sql::register(&lua, isle).unwrap();
 
         let ok: bool = lua
             .load(
@@ -224,7 +153,9 @@ fn kv_empty_list_encodes_as_array() {
         let lua = make_lua_with_std_modules();
         mlua_batteries::task::register(&lua).unwrap();
         let (isle, _driver) = open_isle().await;
-        mlua_batteries::kv::register(&lua, isle).await.unwrap();
+        mlua_batteries_sqlite::kv::register(&lua, isle)
+            .await
+            .unwrap();
 
         let ok: bool = lua
             .load(
@@ -261,7 +192,9 @@ fn kv_set_get_list_delete() {
         let lua = make_lua();
         mlua_batteries::task::register(&lua).unwrap();
         let (isle, _driver) = open_isle().await;
-        mlua_batteries::kv::register(&lua, isle).await.unwrap();
+        mlua_batteries_sqlite::kv::register(&lua, isle)
+            .await
+            .unwrap();
 
         let ok: bool = lua
             .load(
@@ -301,7 +234,9 @@ fn kv_preserves_empty_array_round_trip() {
         let lua = make_lua_with_std_modules();
         mlua_batteries::task::register(&lua).unwrap();
         let (isle, _driver) = open_isle().await;
-        mlua_batteries::kv::register(&lua, isle).await.unwrap();
+        mlua_batteries_sqlite::kv::register(&lua, isle)
+            .await
+            .unwrap();
 
         let ok: bool = lua
             .load(
@@ -343,7 +278,9 @@ fn kv_empty_table_still_round_trips_as_object() {
         let lua = make_lua_with_std_modules();
         mlua_batteries::task::register(&lua).unwrap();
         let (isle, _driver) = open_isle().await;
-        mlua_batteries::kv::register(&lua, isle).await.unwrap();
+        mlua_batteries_sqlite::kv::register(&lua, isle)
+            .await
+            .unwrap();
 
         let ok: bool = lua
             .load(
@@ -379,8 +316,10 @@ fn kv_null_sentinel_and_empty_array_coexist() {
         let lua = make_lua_with_std_modules();
         mlua_batteries::task::register(&lua).unwrap();
         let (isle, _driver) = open_isle().await;
-        mlua_batteries::sql::register(&lua, isle.clone()).unwrap();
-        mlua_batteries::kv::register(&lua, isle).await.unwrap();
+        mlua_batteries_sqlite::sql::register(&lua, isle.clone()).unwrap();
+        mlua_batteries_sqlite::kv::register(&lua, isle)
+            .await
+            .unwrap();
 
         let ok: bool = lua
             .load(
@@ -412,7 +351,9 @@ fn kv_rejects_invalid_namespace() {
         let lua = make_lua();
         mlua_batteries::task::register(&lua).unwrap();
         let (isle, _driver) = open_isle().await;
-        mlua_batteries::kv::register(&lua, isle).await.unwrap();
+        mlua_batteries_sqlite::kv::register(&lua, isle)
+            .await
+            .unwrap();
 
         let err = lua
             .load(r#"std.kv.set("bad/ns", "k", "v")"#)

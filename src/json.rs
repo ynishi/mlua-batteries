@@ -60,10 +60,11 @@ const ARRAY_MT_REGISTRY_KEY: &str = "__mlua_batteries_json_array_mt";
 /// decoding many empty arrays does not allocate a metatable per value, and
 /// so tagged tables can be compared by metatable identity from Lua.
 ///
-/// `pub(crate)` because the NULL-preserving converters in [`crate::sql`]
-/// (used by `std.sql` / `std.kv`) hand out the *same* metatable instance —
+/// Public because the NULL-preserving converters below — and any bridge
+/// built on them, such as the `std.sql` / `std.kv` modules in the
+/// `mlua-batteries-sqlite` crate — hand out the *same* metatable instance:
 /// a table tagged by one bridge must be recognized by the other.
-pub(crate) fn array_metatable(lua: &Lua) -> LuaResult<LuaTable> {
+pub fn array_metatable(lua: &Lua) -> LuaResult<LuaTable> {
     let cached: LuaValue = lua.named_registry_value(ARRAY_MT_REGISTRY_KEY)?;
     if let LuaValue::Table(mt) = cached {
         return Ok(mt);
@@ -78,9 +79,9 @@ pub(crate) fn array_metatable(lua: &Lua) -> LuaResult<LuaTable> {
 ///
 /// Only meaningful for empty tables — the caller checks that first.
 ///
-/// `pub(crate)` so that the NULL-preserving encoder in [`crate::sql`]
-/// applies the same rule instead of duplicating it.
-pub(crate) fn wants_empty_array(table: &LuaTable) -> LuaResult<bool> {
+/// Public so that the NULL-preserving encoder below — and bridges built on
+/// it — apply the same rule instead of duplicating it.
+pub fn wants_empty_array(table: &LuaTable) -> LuaResult<bool> {
     let Some(mt) = table.metatable() else {
         return Ok(false);
     };
@@ -312,6 +313,148 @@ fn lua_table_to_json(table: &LuaTable, depth: usize, max_depth: usize) -> LuaRes
             }
             Ok(JsonValue::Object(map))
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NULL-preserving converters (round-trip fidelity variant)
+//
+// The converters above lower JSON `null` to Lua `nil`, which is idiomatic for
+// `std.json.decode`.  Bridges that must survive a round trip — `std.sql` /
+// `std.kv` in the `mlua-batteries-sqlite` crate, where a SQL NULL column has
+// to stay distinguishable from an absent column — need the opposite: `null`
+// becomes the `LightUserData(null_ptr)` sentinel that Lua sees as
+// `std.sql.null`, so it can be stored in a table (which cannot hold `nil`).
+//
+// They live here, next to `array_metatable` / `wants_empty_array`, because
+// they must apply exactly the same empty-array rules and share the same
+// metatable instance.
+// ---------------------------------------------------------------------------
+
+/// Nesting limit for the NULL-preserving converters.
+///
+/// Fixed rather than read from [`crate::config::Config`]: these run inside
+/// bridges that may be registered without this crate's `Config` in
+/// `lua.app_data`.
+pub const PRESERVING_NULL_MAX_DEPTH: usize = 128;
+
+/// Convert a [`JsonValue`] to a Lua value, keeping `null` as the
+/// `LightUserData(null_ptr)` sentinel instead of lowering it to `nil`.
+///
+/// Empty arrays are tagged with the shared [`array_metatable`], so a value
+/// stored through one bridge and read back through another keeps its `[]`.
+pub fn json_to_lua_preserving_null(lua: &Lua, val: JsonValue) -> LuaResult<LuaValue> {
+    json_to_lua_preserving_null_inner(lua, &val, 0)
+}
+
+fn json_to_lua_preserving_null_inner(
+    lua: &Lua,
+    val: &JsonValue,
+    depth: usize,
+) -> LuaResult<LuaValue> {
+    if depth > PRESERVING_NULL_MAX_DEPTH {
+        return Err(LuaError::external(format!(
+            "JSON nesting too deep (limit: {PRESERVING_NULL_MAX_DEPTH})"
+        )));
+    }
+    match val {
+        JsonValue::Null => Ok(LuaValue::NULL),
+        JsonValue::Bool(b) => Ok(LuaValue::Boolean(*b)),
+        JsonValue::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(LuaValue::Integer(i))
+            } else if let Some(f) = n.as_f64() {
+                Ok(LuaValue::Number(f))
+            } else {
+                Err(LuaError::external(format!(
+                    "JSON number {n} is not representable as i64 or f64"
+                )))
+            }
+        }
+        JsonValue::String(s) => lua.create_string(s).map(LuaValue::String),
+        JsonValue::Array(arr) => {
+            let table = lua.create_table()?;
+            for (i, v) in arr.iter().enumerate() {
+                table.set(i + 1, json_to_lua_preserving_null_inner(lua, v, depth + 1)?)?;
+            }
+            if arr.is_empty() {
+                table.set_metatable(Some(array_metatable(lua)?))?;
+            }
+            Ok(LuaValue::Table(table))
+        }
+        JsonValue::Object(map) => {
+            let table = lua.create_table()?;
+            for (k, v) in map {
+                table.set(
+                    k.as_str(),
+                    json_to_lua_preserving_null_inner(lua, v, depth + 1)?,
+                )?;
+            }
+            Ok(LuaValue::Table(table))
+        }
+    }
+}
+
+/// Convert a Lua value to a [`JsonValue`], treating both `nil` and the
+/// `LightUserData(null_ptr)` sentinel as JSON `null`.
+///
+/// Empty tables follow [`wants_empty_array`]: tagged ones encode as `[]`,
+/// untagged ones as `{}`.
+pub fn lua_to_json_preserving_null(val: LuaValue) -> LuaResult<JsonValue> {
+    lua_to_json_preserving_null_inner(&val, 0)
+}
+
+fn lua_to_json_preserving_null_inner(val: &LuaValue, depth: usize) -> LuaResult<JsonValue> {
+    if depth > PRESERVING_NULL_MAX_DEPTH {
+        return Err(LuaError::external(format!(
+            "Lua table nesting too deep for JSON (limit: {PRESERVING_NULL_MAX_DEPTH})"
+        )));
+    }
+    match val {
+        LuaValue::Nil => Ok(JsonValue::Null),
+        LuaValue::LightUserData(u) if u.0.is_null() => Ok(JsonValue::Null),
+        LuaValue::Boolean(b) => Ok(JsonValue::Bool(*b)),
+        LuaValue::Integer(i) => Ok(JsonValue::Number((*i).into())),
+        LuaValue::Number(n) => serde_json::Number::from_f64(*n)
+            .map(JsonValue::Number)
+            .ok_or_else(|| LuaError::external(format!("cannot convert {n} to JSON number"))),
+        LuaValue::String(s) => Ok(JsonValue::String(s.to_str()?.to_string())),
+        LuaValue::Table(t) => {
+            let len = t.raw_len();
+            if len > 0 {
+                let mut arr = Vec::with_capacity(len);
+                for i in 1..=len {
+                    let v: LuaValue = t.raw_get(i)?;
+                    arr.push(lua_to_json_preserving_null_inner(&v, depth + 1)?);
+                }
+                Ok(JsonValue::Array(arr))
+            } else {
+                let mut map = serde_json::Map::new();
+                for pair in t.clone().pairs::<LuaValue, LuaValue>() {
+                    let (k, v) = pair?;
+                    let key = match k {
+                        LuaValue::String(s) => s.to_str()?.to_string(),
+                        LuaValue::Integer(i) => i.to_string(),
+                        LuaValue::Number(n) => n.to_string(),
+                        other => {
+                            return Err(LuaError::external(format!(
+                                "unsupported table key type for JSON: {}",
+                                other.type_name()
+                            )));
+                        }
+                    };
+                    map.insert(key, lua_to_json_preserving_null_inner(&v, depth + 1)?);
+                }
+                if map.is_empty() && wants_empty_array(t)? {
+                    return Ok(JsonValue::Array(Vec::new()));
+                }
+                Ok(JsonValue::Object(map))
+            }
+        }
+        other => Err(LuaError::external(format!(
+            "unsupported type for JSON conversion: {}",
+            other.type_name()
+        ))),
     }
 }
 

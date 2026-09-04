@@ -6,8 +6,8 @@
 //! - `std.sql.null` — sentinel for SQL NULL on the Lua side
 //!
 //! Statements run on the connection thread owned by an
-//! [`AsyncIsle`](crate::sqlite_backend::rusqlite_isle::AsyncIsle), so no
-//! blocking call and no lock guard ever crosses an `.await` in this crate.
+//! [`AsyncIsle`](crate::rusqlite_isle::AsyncIsle), so no blocking call and no
+//! lock guard ever crosses an `.await` in this crate.
 //!
 //! # Wiring contract
 //!
@@ -20,14 +20,16 @@
 //! connection.
 //!
 //! Which `rusqlite` / `rusqlite-isle` versions those types come from is
-//! selected by the track feature — see [`crate::sqlite_backend`].
+//! decided by the release line — see [the crate docs](crate) for the track
+//! table, and [`crate::rusqlite_isle`] to name them without a second
+//! dependency.
 //!
 //! # Cancellation integration
 //!
-//! When the `task` feature is enabled (it is, transitively, since `sql`
-//! depends on `task`), every query/exec races against the enclosing
-//! `task.scope` / `task.with_timeout`'s [`CancelToken`](crate::task::CancelToken)
-//! via [`crate::task::effective_token`].  Jobs are submitted with
+//! Every query/exec races against the enclosing `task.scope` /
+//! `task.with_timeout`'s
+//! [`CancelToken`](mlua_batteries::task::CancelToken) via
+//! [`mlua_batteries::task::effective_token`].  Jobs are submitted with
 //! `spawn_call`, whose `AsyncTask` cancels on drop: when the enclosing token
 //! fires, or the configured timeout elapses, the dropped task interrupts the
 //! running statement through the isle's own two-stage cancellation.
@@ -35,6 +37,7 @@
 use std::time::Duration;
 
 use mlua::prelude::*;
+use mlua_batteries::json::{array_metatable, json_to_lua_preserving_null};
 use serde_json::Map;
 use tracing::warn;
 
@@ -205,7 +208,7 @@ where
         }
     };
 
-    let wait_result = match crate::task::effective_token() {
+    let wait_result = match mlua_batteries::task::effective_token() {
         Some(t) => tokio::select! {
             biased;
             _ = t.cancelled() => {
@@ -368,130 +371,7 @@ pub(crate) fn rows_to_lua(
         arr.set(i + 1, row_tbl)?;
     }
     if row_count == 0 {
-        arr.set_metatable(Some(crate::json::array_metatable(lua)?))?;
+        arr.set_metatable(Some(array_metatable(lua)?))?;
     }
     Ok(LuaValue::Table(arr))
-}
-
-// ---------------------------------------------------------------------------
-// JSON ↔ Lua helpers (NULL-preserving — distinct from crate::json)
-//
-// `crate::json` lowers JSON `null` to Lua `nil` (idiomatic for
-// `std.json.decode`).  The sql/kv bridges instead need round-trip fidelity
-// so SQL NULL columns and JSON `null` values survive being placed into Lua
-// tables (which cannot hold `nil`).  Agents compare against `std.sql.null`.
-// ---------------------------------------------------------------------------
-
-const MAX_JSON_DEPTH: usize = 128;
-
-pub(crate) fn json_to_lua_preserving_null(
-    lua: &Lua,
-    val: serde_json::Value,
-) -> LuaResult<LuaValue> {
-    json_to_lua_inner(lua, &val, 0)
-}
-
-fn json_to_lua_inner(lua: &Lua, val: &serde_json::Value, depth: usize) -> LuaResult<LuaValue> {
-    if depth > MAX_JSON_DEPTH {
-        return Err(LuaError::external(format!(
-            "JSON nesting too deep (limit: {MAX_JSON_DEPTH})"
-        )));
-    }
-    match val {
-        serde_json::Value::Null => Ok(LuaValue::NULL),
-        serde_json::Value::Bool(b) => Ok(LuaValue::Boolean(*b)),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Ok(LuaValue::Integer(i))
-            } else if let Some(f) = n.as_f64() {
-                Ok(LuaValue::Number(f))
-            } else {
-                Err(LuaError::external(format!(
-                    "JSON number {n} is not representable as i64 or f64"
-                )))
-            }
-        }
-        serde_json::Value::String(s) => lua.create_string(s).map(LuaValue::String),
-        serde_json::Value::Array(arr) => {
-            let table = lua.create_table()?;
-            for (i, v) in arr.iter().enumerate() {
-                table.set(i + 1, json_to_lua_inner(lua, v, depth + 1)?)?;
-            }
-            if arr.is_empty() {
-                // Same `__jsontype = "array"` tag (and the same metatable
-                // instance) that `crate::json` uses, so an empty array read
-                // back out of sql / kv re-encodes as `[]` rather than `{}`.
-                table.set_metatable(Some(crate::json::array_metatable(lua)?))?;
-            }
-            Ok(LuaValue::Table(table))
-        }
-        serde_json::Value::Object(map) => {
-            let table = lua.create_table()?;
-            for (k, v) in map {
-                table.set(k.as_str(), json_to_lua_inner(lua, v, depth + 1)?)?;
-            }
-            Ok(LuaValue::Table(table))
-        }
-    }
-}
-
-pub(crate) fn lua_to_json_preserving_null(val: LuaValue) -> LuaResult<serde_json::Value> {
-    lua_to_json_inner(&val, 0)
-}
-
-fn lua_to_json_inner(val: &LuaValue, depth: usize) -> LuaResult<serde_json::Value> {
-    if depth > MAX_JSON_DEPTH {
-        return Err(LuaError::external(format!(
-            "Lua table nesting too deep for JSON (limit: {MAX_JSON_DEPTH})"
-        )));
-    }
-    match val {
-        LuaValue::Nil => Ok(serde_json::Value::Null),
-        LuaValue::LightUserData(u) if u.0.is_null() => Ok(serde_json::Value::Null),
-        LuaValue::Boolean(b) => Ok(serde_json::Value::Bool(*b)),
-        LuaValue::Integer(i) => Ok(serde_json::Value::Number((*i).into())),
-        LuaValue::Number(n) => serde_json::Number::from_f64(*n)
-            .map(serde_json::Value::Number)
-            .ok_or_else(|| LuaError::external(format!("cannot convert {n} to JSON number"))),
-        LuaValue::String(s) => Ok(serde_json::Value::String(s.to_str()?.to_string())),
-        LuaValue::Table(t) => {
-            let len = t.raw_len();
-            if len > 0 {
-                let mut arr = Vec::with_capacity(len);
-                for i in 1..=len {
-                    let v: LuaValue = t.raw_get(i)?;
-                    arr.push(lua_to_json_inner(&v, depth + 1)?);
-                }
-                Ok(serde_json::Value::Array(arr))
-            } else {
-                let mut map = serde_json::Map::new();
-                for pair in t.clone().pairs::<LuaValue, LuaValue>() {
-                    let (k, v) = pair?;
-                    let key = match k {
-                        LuaValue::String(s) => s.to_str()?.to_string(),
-                        LuaValue::Integer(i) => i.to_string(),
-                        LuaValue::Number(n) => n.to_string(),
-                        other => {
-                            return Err(LuaError::external(format!(
-                                "unsupported table key type for JSON: {}",
-                                other.type_name()
-                            )));
-                        }
-                    };
-                    map.insert(key, lua_to_json_inner(&v, depth + 1)?);
-                }
-                if map.is_empty() && crate::json::wants_empty_array(t)? {
-                    // Empty table asking to be an array (`__jsontype` tag or
-                    // mlua's serde array metatable) — same rule as
-                    // `crate::json`.  Tables with entries never get here.
-                    return Ok(serde_json::Value::Array(Vec::new()));
-                }
-                Ok(serde_json::Value::Object(map))
-            }
-        }
-        other => Err(LuaError::external(format!(
-            "unsupported type for JSON conversion: {}",
-            other.type_name()
-        ))),
-    }
 }

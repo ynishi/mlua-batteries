@@ -4,7 +4,7 @@ Batteries-included standard library modules for [mlua](https://github.com/mlua-r
 
 Lua 5.4 scripts gain access to JSON, environment variables, filesystem, HTTP, hashing, LLM chat completion, structured async tasks, and SQLite-backed storage — all behind a configurable policy layer that can sandbox untrusted code.
 
-Core modules (`json`, `env`, `path`, `time`, `fs`, `http`, `hash`, `llm`, `string`, `regex`, `validate`, `log`, `uuid`, `base64`, `schema`, `sandbox`) are **synchronous (blocking)** and require no async runtime. The optional `task` / `sql` / `kv` modules require a `tokio` current-thread runtime driving a `LocalSet` (see the [Async modules](#async-modules) section).
+Core modules (`json`, `env`, `path`, `time`, `fs`, `http`, `hash`, `llm`, `string`, `regex`, `validate`, `log`, `uuid`, `base64`, `schema`, `sandbox`) are **synchronous (blocking)** and require no async runtime. The optional `task` module requires a `tokio` current-thread runtime driving a `LocalSet` (see the [Async modules](#async-modules) section), as do the `std.sql` / `std.kv` bridges in the companion [`mlua-batteries-sqlite`](crates/mlua-batteries-sqlite) crate.
 
 ## Modules
 
@@ -29,10 +29,10 @@ Core modules (`json`, `env`, `path`, `time`, `fs`, `http`, `hash`, `llm`, `strin
 | `proc` | `proc` | Typed argv pipeline spawn — no shell involved |
 | `watch` | `watch` | Filesystem versioning watcher — content-addressed store + JSONL journal (`notify`) |
 | `task` | `task` | Structured async tasks with cooperative cancellation (requires tokio) |
-| `sql` | `sql` | SQLite bridge via `rusqlite-isle` (thread-isolated connection) |
-| `kv` | `kv` | SQLite-backed key-value store (namespace-scoped) |
 
-Default features: `json`, `env`, `path`, `time`, `string`, `validate`, `sqlite-bundled` (inert unless `sql` is enabled).
+`std.sql` / `std.kv` moved to the [`mlua-batteries-sqlite`](crates/mlua-batteries-sqlite) crate in 0.5.0 — see [SQLite](#sqlite-stdsql--stdkv) below.
+
+Default features: `json`, `env`, `path`, `time`, `string`, `validate`.
 Enable everything: `full`.
 
 ## Quick start
@@ -130,39 +130,31 @@ Custom providers can be registered via `mlua_batteries::llm::register_provider`.
 
 ## Async modules
 
-`task`, `sql`, and `kv` are async-first and require a `tokio` current-thread runtime driving a `LocalSet`. They are **not** part of the default feature set — opt in explicitly.
+`task` is async-first and requires a `tokio` current-thread runtime driving a `LocalSet`. It is **not** part of the default feature set — opt in explicitly.
 
 ```toml
 [dependencies]
-mlua-batteries = { version = "0.4", features = ["task", "sql", "kv"] }
+mlua-batteries = { version = "0.5", features = ["task"] }
 tokio = { version = "1", features = ["rt", "macros"] }
 ```
 
-- `task` provides structured concurrency primitives (`spawn`, `scope`, `with_timeout`, `sleep`, `checkpoint`) with cooperative, level-triggered cancellation. `with_timeout` applies a 3-stage graceful-abort pattern (deadline → drain under `grace_ms` → hard-abort).
-- `sql` is a SQLite bridge over [`rusqlite-isle`](https://crates.io/crates/rusqlite-isle). The host owns the `AsyncIsle` (and the `AsyncIsleDriver` that shuts its thread down) and passes a clone of the handle; statements run on the isle's connection thread, and cancel integrates with the enclosing scope by dropping the job, which the isle turns into `sqlite3_interrupt`.
-- `kv` is a namespace-scoped key-value store backed by a SQLite table on a host-supplied isle. Writes run under `BEGIN IMMEDIATE`; durability and atomicity come from SQLite's WAL journal. Registration is `async` because the `__kv` table is created through the isle.
+`task` provides structured concurrency primitives (`spawn`, `scope`, `with_timeout`, `sleep`, `checkpoint`) with cooperative, level-triggered cancellation. `with_timeout` applies a 3-stage graceful-abort pattern (deadline → drain under `grace_ms` → hard-abort).
 
-```rust,ignore
-use mlua_batteries::sqlite_backend::rusqlite_isle::AsyncIsle;
+See the module-level rustdoc on `src/task/mod.rs` for the full API.
 
-let (isle, _driver) = AsyncIsle::open_in_memory(|_conn| Ok(())).await?;
-mlua_batteries::sql::register(&lua, isle.clone())?;
-mlua_batteries::kv::register(&lua, isle).await?;
+## SQLite: `std.sql` / `std.kv`
+
+The SQLite bridges live in a companion crate, [`mlua-batteries-sqlite`](crates/mlua-batteries-sqlite) (`crates/mlua-batteries-sqlite` in this repo). They were part of this crate up to 0.4.0 and moved out in 0.5.0.
+
+```toml
+[dependencies]
+mlua-batteries = { version = "0.5", features = ["task"] }
+mlua-batteries-sqlite = "0.5"   # pick the line matching your rusqlite cluster
 ```
 
-### SQLite version track
+The reason for the split is the SQLite stack, not the code. `libsqlite3-sys` declares `links = "sqlite3"`, so a build graph holds exactly one of its major versions, and cargo enforces that while *resolving* dependencies — meaning no crate can offer several clusters behind mutually exclusive features. Serving more than one cluster requires more than one published version line. Keeping that constraint on the small bridge crate leaves this crate's version line free for its own features, and leaves consumers who do not need SQLite free of a C library.
 
-`libsqlite3-sys` declares `links = "sqlite3"`, so a build graph can hold exactly one of its major versions — and cargo enforces that when it *resolves* dependencies, so no crate can offer several clusters behind mutually exclusive features. Each release line of this crate therefore tracks one cluster, the same way `rusqlite-isle` does:
-
-| `mlua-batteries` | `rusqlite-isle` | `rusqlite` | `libsqlite3-sys` |
-|---|---|---|---|
-| `0.4` | 0.5 | 0.37 | 0.35 |
-
-Pick the line whose cluster your other rusqlite-dependent crates already sit on. The bridges name the stack only through `mlua_batteries::sqlite_backend`, which re-exports the active `rusqlite` and `rusqlite_isle` — hosts can wire everything through that re-export instead of declaring a second, separately-versioned dependency.
-
-`sqlite-bundled` (on by default) forwards to `rusqlite/bundled`; use `default-features = false` to link the system SQLite instead.
-
-See the module-level rustdoc on `src/task/mod.rs`, `src/sql.rs`, and `src/kv.rs` for the full API and wiring contract.
+The companion crate's README carries the cluster table and the wiring contract.
 
 ## Configuration
 
