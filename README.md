@@ -149,7 +149,7 @@ The SQLite bridges live in a companion crate, [`mlua-batteries-sqlite`](crates/m
 ```toml
 [dependencies]
 mlua-batteries = { version = "0.5", features = ["task"] }
-mlua-batteries-sqlite = "0.5"   # pick the line matching your rusqlite cluster
+mlua-batteries-sqlite = "0.6"
 ```
 
 The reason for the split is the SQLite stack, not the code. `libsqlite3-sys` declares `links = "sqlite3"`, so a build graph holds exactly one of its major versions, and cargo enforces that while *resolving* dependencies — meaning no crate can offer several clusters behind mutually exclusive features. Serving more than one cluster requires more than one published version line. Keeping that constraint on the small bridge crate leaves this crate's version line free for its own features, and leaves consumers who do not need SQLite free of a C library.

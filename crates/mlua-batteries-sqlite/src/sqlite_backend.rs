@@ -1,10 +1,7 @@
 //! The SQLite stack this crate is built on, in one place.
 //!
-//! `sql` and `kv` name `rusqlite` / `rusqlite_isle` only through these two
-//! re-exports, so moving a release line onto another rusqlite cluster is an
-//! edit of the two dependency lines in `Cargo.toml` plus the version — the
-//! isle minors carry the same public API. See the track table in
-//! [the crate docs](crate).
+//! `sql` and `kv` name `rusqlite` only through this re-export, so moving the
+//! crate onto another rusqlite cluster is an edit of the one dependency line
+//! in `Cargo.toml` plus the version.
 
 pub use ::rusqlite;
-pub use ::rusqlite_isle;

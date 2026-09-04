@@ -1,23 +1,13 @@
 [package]
 name = "mlua-batteries-sqlite"
-# The minor encodes the rusqlite cluster this line tracks, mirroring
-# `rusqlite-isle`'s numbering so the two are readable side by side:
-#
-#   0.5.x  ->  rusqlite-isle 0.5  ->  rusqlite 0.37  ->  libsqlite3-sys 0.35
-#   0.3.x  ->  rusqlite-isle 0.3  ->  rusqlite 0.32  ->  libsqlite3-sys 0.30
-#   0.2.x  ->  rusqlite-isle 0.2  ->  rusqlite 0.31  ->  libsqlite3-sys 0.28
-#
-# `libsqlite3-sys` declares `links = "sqlite3"`, so one build graph holds one
-# cluster and cargo enforces it at dependency-resolution time — which is why
-# the track is a version line rather than a feature.
-version = "0.5.0"
+version = "0.6.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "SQLite bridge (std.sql / std.kv) for mlua-batteries, built on rusqlite-isle"
+description = "SQLite bridge (std.sql / std.kv) for mlua-batteries, built on rusqlite + tokio spawn_blocking"
 readme = "README.md"
 keywords = ["lua", "mlua", "sqlite", "rusqlite", "kv"]
 categories = ["database", "api-bindings"]
@@ -26,7 +16,7 @@ categories = ["database", "api-bindings"]
 default = ["sqlite-bundled"]
 # Build and link SQLite from source (`rusqlite/bundled`). On by default; turn
 # it off with `default-features = false` to link the system library instead.
-sqlite-bundled = ["rusqlite-isle/bundled"]
+sqlite-bundled = ["rusqlite/bundled"]
 
 [dependencies]
 mlua = { version = "0.11", features = ["lua54", "vendored"] }
@@ -48,12 +38,12 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
 tracing = "0.1"
 
-# `rusqlite-isle` drives the connection thread; the bare `rusqlite` dep is
-# still needed because the isle does not re-export it and the converters name
-# `types::{Value, ValueRef}` directly. Both must resolve to the same cluster —
-# switching tracks is an edit of these two lines plus the version above.
-rusqlite-isle = { version = "0.5", default-features = false, features = ["tokio"] }
-rusqlite = "0.37"
+# The one SQLite dependency. `libsqlite3-sys` declares `links = "sqlite3"`, so
+# a build graph holds exactly one of its major versions; the cluster this
+# crate sits on is decided here and nowhere else. Hosts reach the same
+# `rusqlite` through `mlua_batteries_sqlite::rusqlite` instead of declaring a
+# second dependency that could drift onto another cluster.
+rusqlite = { version = "0.37", default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
