@@ -19,22 +19,30 @@
 //!
 //! # Wiring contract
 //!
-//! Symmetric with [`crate::sql`].  The host opens a `rusqlite::Connection`
-//! (typically a database file dedicated to KV scratch state, kept separate
-//! from the `std.sql` user database so backup / WAL / page-cache lifecycles
-//! do not collide) and passes it as `Arc<Mutex<_>>` plus its
-//! `InterruptHandle`.  Cancellation and per-query timeout are inherited
-//! from the [`crate::sql::SqlConfig`] in `lua.app_data`.
-
-use std::sync::Arc;
+//! Symmetric with [`crate::sql`].  The host opens an `AsyncIsle` (typically
+//! over a database file dedicated to KV scratch state, kept separate from the
+//! `std.sql` user database so backup / WAL / page-cache lifecycles do not
+//! collide) and passes a clone of the handle.  Cancellation and per-query
+//! timeout are inherited from the [`crate::sql::SqlConfig`] in
+//! `lua.app_data`; the `rusqlite` / `rusqlite-isle` versions come from the
+//! track feature (see [`crate::sqlite_backend`]).
+//!
+//! Registration is `async` because the `__kv` table is created through the
+//! isle before the module is exposed to Lua.  Hosts that would rather do it
+//! at open time can call [`init_schema`] from the isle's `init` closure —
+//! the DDL is `CREATE TABLE IF NOT EXISTS`, so running it twice is harmless.
+//!
+//! Writes (`set` / `delete`) run inside a `BEGIN IMMEDIATE` transaction, so
+//! they take the write lock up front rather than risking the
+//! timeout-bypassing deferred upgrade under cross-process contention.
 
 use mlua::prelude::*;
-use rusqlite::{Connection, InterruptHandle, OptionalExtension};
 
 use crate::sql::{
-    json_to_lua_preserving_null, lock_conn, lua_to_json_preserving_null, race_timeout,
-    sql_query_timeout, SqlConfig,
+    json_to_lua_preserving_null, lua_to_json_preserving_null, run_job, sql_query_timeout, SqlConfig,
 };
+use crate::sqlite_backend::rusqlite::{self, Connection, OptionalExtension};
+use crate::sqlite_backend::rusqlite_isle::AsyncIsle;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -56,11 +64,36 @@ fn validate_ns(ns: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn init_schema(conn: &Connection) -> Result<(), String> {
+/// Create the `__kv` table if it is not there yet.
+///
+/// [`register`] / [`register_with`] run this through the isle before exposing
+/// `std.kv`, so hosts do not have to.  It is public for hosts that prefer to
+/// do it at open time, from the isle's `init` closure:
+///
+/// ```rust,ignore
+/// let (isle, driver) = AsyncIsle::spawn("kv.db", mlua_batteries::kv::init_schema).await?;
+/// ```
+pub fn init_schema(conn: &mut Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS __kv (\n                ns    TEXT NOT NULL,\n                key   TEXT NOT NULL,\n                value TEXT NOT NULL,\n                PRIMARY KEY (ns, key)\n            ) WITHOUT ROWID;",
     )
-    .map_err(|e| format!("kv schema init: {e}"))
+}
+
+/// Run one write statement under `BEGIN IMMEDIATE`, returning the row count.
+fn kv_write(
+    conn: &mut Connection,
+    op: &'static str,
+    sql: &str,
+    params: &[&dyn rusqlite::ToSql],
+) -> Result<usize, String> {
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| format!("{op} begin: {e}"))?;
+    let affected = tx
+        .execute(sql, params)
+        .map_err(|e| format!("{op} sql error: {e}"))?;
+    tx.commit().map_err(|e| format!("{op} commit: {e}"))?;
+    Ok(affected)
 }
 
 // ---------------------------------------------------------------------------
@@ -69,12 +102,8 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
 
 /// Register `std.kv` with default [`SqlConfig`] (only used if `std.sql` was
 /// not registered first; otherwise the existing config is preserved).
-pub fn register(
-    lua: &Lua,
-    conn: Arc<std::sync::Mutex<Connection>>,
-    interrupt: Arc<InterruptHandle>,
-) -> LuaResult<()> {
-    register_with(lua, conn, interrupt, SqlConfig::default())
+pub async fn register(lua: &Lua, isle: AsyncIsle) -> LuaResult<()> {
+    register_with(lua, isle, SqlConfig::default()).await
 }
 
 /// Register `std.kv` with caller-provided [`SqlConfig`].
@@ -82,47 +111,38 @@ pub fn register(
 /// If `std.sql` was registered earlier with a `SqlConfig`, the same slot
 /// in `lua.app_data` is overwritten — pass an identical config from the
 /// host to keep `sql` and `kv` in sync (the typical case).
-pub fn register_with(
-    lua: &Lua,
-    conn: Arc<std::sync::Mutex<Connection>>,
-    interrupt: Arc<InterruptHandle>,
-    cfg: SqlConfig,
-) -> LuaResult<()> {
+pub async fn register_with(lua: &Lua, isle: AsyncIsle, cfg: SqlConfig) -> LuaResult<()> {
     lua.set_app_data::<SqlConfig>(cfg);
 
-    // One-time schema init on the supplied connection.
-    {
-        let guard = lock_conn(&conn);
-        init_schema(&guard).map_err(LuaError::external)?;
-    }
+    // One-time schema init, through the isle that owns the connection.
+    isle.call(init_schema)
+        .await
+        .map_err(|e| LuaError::external(format!("kv schema init: {e}")))?;
 
     let kv_tbl = lua.create_table()?;
 
     // ── std.kv.get ────────────────────────────────────────────────────────
     {
-        let conn = Arc::clone(&conn);
-        let interrupt = Arc::clone(&interrupt);
+        let isle = isle.clone();
         kv_tbl.set(
             "get",
             lua.create_async_function(move |lua, (ns, key): (String, String)| {
-                let conn = Arc::clone(&conn);
-                let interrupt = Arc::clone(&interrupt);
+                let isle = isle.clone();
                 let ns_check = validate_ns(&ns).map_err(LuaError::external);
                 async move {
                     ns_check?;
-                    let fut = tokio::task::spawn_blocking(move || {
-                        let guard = lock_conn(&conn);
-                        guard
+                    let timeout = sql_query_timeout(&lua);
+                    let row = run_job(&isle, timeout, "kv.get", move |conn| {
+                        Ok(conn
                             .query_row(
                                 "SELECT value FROM __kv WHERE ns = ?1 AND key = ?2",
                                 rusqlite::params![ns, key],
                                 |row| row.get::<_, String>(0),
                             )
                             .optional()
-                            .map_err(|e| format!("kv.get sql error: {e}"))
-                    });
-                    let timeout = sql_query_timeout(&lua);
-                    let row = race_timeout(fut, timeout, &interrupt, "kv.get").await?;
+                            .map_err(|e| format!("kv.get sql error: {e}")))
+                    })
+                    .await?;
                     match row {
                         None => Ok(LuaValue::Nil),
                         Some(s) => {
@@ -139,15 +159,13 @@ pub fn register_with(
 
     // ── std.kv.set ────────────────────────────────────────────────────────
     {
-        let conn = Arc::clone(&conn);
-        let interrupt = Arc::clone(&interrupt);
+        let isle = isle.clone();
         kv_tbl.set(
             "set",
             lua.create_async_function(move |lua, (ns, key, value): (String, String, LuaValue)| {
-                let conn = Arc::clone(&conn);
-                let interrupt = Arc::clone(&interrupt);
+                let isle = isle.clone();
                 // Serialize synchronously on the Lua thread (LuaValue is
-                // !Send, so it can't cross the spawn_blocking boundary).
+                // !Send, so it can't cross the job boundary).
                 let ns_check = validate_ns(&ns).map_err(LuaError::external);
                 let json_result = lua_to_json_preserving_null(value).and_then(|v| {
                     serde_json::to_string(&v)
@@ -156,19 +174,18 @@ pub fn register_with(
                 async move {
                     ns_check?;
                     let json_str = json_result?;
-                    let fut = tokio::task::spawn_blocking(move || {
-                        let guard = lock_conn(&conn);
-                        guard
-                            .execute(
-                                "INSERT INTO __kv (ns, key, value) VALUES (?1, ?2, ?3) \
-                                     ON CONFLICT(ns, key) DO UPDATE SET value = excluded.value",
-                                rusqlite::params![ns, key, json_str],
-                            )
-                            .map(|_| ())
-                            .map_err(|e| format!("kv.set sql error: {e}"))
-                    });
                     let timeout = sql_query_timeout(&lua);
-                    race_timeout(fut, timeout, &interrupt, "kv.set").await
+                    run_job(&isle, timeout, "kv.set", move |conn| {
+                        Ok(kv_write(
+                            conn,
+                            "kv.set",
+                            "INSERT INTO __kv (ns, key, value) VALUES (?1, ?2, ?3) \
+                                 ON CONFLICT(ns, key) DO UPDATE SET value = excluded.value",
+                            &[&ns, &key, &json_str],
+                        )
+                        .map(|_| ()))
+                    })
+                    .await
                 }
             })?,
         )?;
@@ -176,28 +193,25 @@ pub fn register_with(
 
     // ── std.kv.delete ─────────────────────────────────────────────────────
     {
-        let conn = Arc::clone(&conn);
-        let interrupt = Arc::clone(&interrupt);
+        let isle = isle.clone();
         kv_tbl.set(
             "delete",
             lua.create_async_function(move |lua, (ns, key): (String, String)| {
-                let conn = Arc::clone(&conn);
-                let interrupt = Arc::clone(&interrupt);
+                let isle = isle.clone();
                 let ns_check = validate_ns(&ns).map_err(LuaError::external);
                 async move {
                     ns_check?;
-                    let fut = tokio::task::spawn_blocking(move || {
-                        let guard = lock_conn(&conn);
-                        guard
-                            .execute(
-                                "DELETE FROM __kv WHERE ns = ?1 AND key = ?2",
-                                rusqlite::params![ns, key],
-                            )
-                            .map(|n| n > 0)
-                            .map_err(|e| format!("kv.delete sql error: {e}"))
-                    });
                     let timeout = sql_query_timeout(&lua);
-                    race_timeout(fut, timeout, &interrupt, "kv.delete").await
+                    run_job(&isle, timeout, "kv.delete", move |conn| {
+                        Ok(kv_write(
+                            conn,
+                            "kv.delete",
+                            "DELETE FROM __kv WHERE ns = ?1 AND key = ?2",
+                            &[&ns, &key],
+                        )
+                        .map(|n| n > 0))
+                    })
+                    .await
                 }
             })?,
         )?;
@@ -205,30 +219,29 @@ pub fn register_with(
 
     // ── std.kv.list ───────────────────────────────────────────────────────
     {
-        let conn = Arc::clone(&conn);
-        let interrupt = Arc::clone(&interrupt);
+        let isle = isle.clone();
         kv_tbl.set(
             "list",
             lua.create_async_function(move |lua, (ns, prefix): (String, Option<String>)| {
-                let conn = Arc::clone(&conn);
-                let interrupt = Arc::clone(&interrupt);
+                let isle = isle.clone();
                 let ns_check = validate_ns(&ns).map_err(LuaError::external);
                 async move {
                     ns_check?;
-                    let fut = tokio::task::spawn_blocking(move || {
-                        let guard = lock_conn(&conn);
-                        let mut stmt = guard
-                            .prepare("SELECT key FROM __kv WHERE ns = ?1 ORDER BY key")
-                            .map_err(|e| format!("kv.list prepare: {e}"))?;
-                        let keys: Vec<String> = stmt
-                            .query_map(rusqlite::params![ns], |row| row.get::<_, String>(0))
-                            .map_err(|e| format!("kv.list query: {e}"))?
-                            .collect::<Result<_, _>>()
-                            .map_err(|e| format!("kv.list row: {e}"))?;
-                        Ok::<_, String>(keys)
-                    });
                     let timeout = sql_query_timeout(&lua);
-                    let keys = race_timeout(fut, timeout, &interrupt, "kv.list").await?;
+                    let keys = run_job(&isle, timeout, "kv.list", move |conn| {
+                        Ok((|| {
+                            let mut stmt = conn
+                                .prepare("SELECT key FROM __kv WHERE ns = ?1 ORDER BY key")
+                                .map_err(|e| format!("kv.list prepare: {e}"))?;
+                            let keys: Vec<String> = stmt
+                                .query_map(rusqlite::params![ns], |row| row.get::<_, String>(0))
+                                .map_err(|e| format!("kv.list query: {e}"))?
+                                .collect::<Result<_, _>>()
+                                .map_err(|e| format!("kv.list row: {e}"))?;
+                            Ok::<_, String>(keys)
+                        })())
+                    })
+                    .await?;
 
                     let tbl = lua.create_table()?;
                     let mut idx = 1usize;
