@@ -1,6 +1,6 @@
 [package]
 name = "mlua-batteries"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.77"
 description = "Batteries-included standard library modules for mlua"
@@ -13,7 +13,7 @@ keywords = ["lua", "mlua", "batteries", "stdlib", "sandbox"]
 categories = ["development-tools", "api-bindings"]
 
 [features]
-default = ["json", "env", "path", "time", "string", "validate"]
+default = ["json", "env", "path", "time", "string", "validate", "sqlite-bundled"]
 json = ["dep:serde_json"]
 env = []
 path = []
@@ -38,12 +38,25 @@ watch = ["dep:notify", "dep:sha2", "dep:serde_json", "dep:tracing"]
 # Async / structured-concurrency primitives. Requires a tokio
 # current-thread runtime + LocalSet (mlua-isle's AsyncIsle satisfies this).
 task = ["dep:tokio", "dep:tracing", "mlua/async"]
-# SQLite bridge built on rusqlite + spawn_blocking. Depends on `task` for
-# cooperative cancellation through the enclosing scope's CancelToken.
-sql = ["task", "json", "dep:rusqlite"]
-# SQLite-backed key-value store. Reuses the sql bridge's connection
-# locking + race_timeout helpers; supply a dedicated rusqlite::Connection.
+# SQLite bridge built on rusqlite-isle. Depends on `task` for cooperative
+# cancellation through the enclosing scope's CancelToken.
+#
+# This published version tracks rusqlite 0.37 / libsqlite3-sys 0.35 (see the
+# track table in README.md).  The track cannot be a feature: `libsqlite3-sys`
+# declares `links = "sqlite3"`, and cargo rejects the manifest at *resolution*
+# time if two rusqlite clusters appear as optional dependencies — even when
+# only one of them is activated.  Other clusters are therefore served by
+# separate published versions, as `rusqlite-isle` does.
+sql = ["task", "json", "dep:isle037", "dep:rq037"]
+# SQLite-backed key-value store. Reuses the sql bridge's isle job helper and
+# NULL-preserving converters; supply a dedicated AsyncIsle.
 kv = ["sql"]
+
+# Build and link SQLite from source (`rusqlite/bundled`).  On by default; turn
+# it off with `default-features = false` to link the system library instead.
+# Weak (`dep?/`) so it is inert unless `sql` is enabled.
+sqlite-bundled = ["isle037?/bundled"]
+
 full = ["json", "env", "path", "time", "string", "regex", "validate", "log", "uuid", "base64", "fs", "http", "llm", "hash", "schema", "sandbox", "proc", "watch", "task", "sql", "kv"]
 
 [dependencies]
@@ -65,9 +78,20 @@ schema-bridge = { version = "0.4.0", features = ["mlua"], optional = true }
 cap-std = { version = "4", optional = true }
 tokio = { version = "1", features = ["rt", "time", "sync", "macros"], optional = true }
 tracing = { version = "0.1", optional = true }
-rusqlite = { version = "0.31", optional = true }
+
+# ── SQLite stack (this version's track: rusqlite 0.37) ─────────────────────
+# Renamed so the pair reads as one unit and so switching tracks is a two-line
+# edit (`rusqlite-isle` 0.5 → 0.3 → 0.2 alongside rusqlite 0.37 → 0.32 →
+# 0.31).  `rusqlite-isle` drives the connection thread; the bare `rusqlite`
+# dep is still needed because the isle does not re-export it and the
+# converters name `types::{Value, ValueRef}` directly.  Both halves must
+# resolve to the same rusqlite cluster.
+isle037 = { package = "rusqlite-isle", version = "0.5", default-features = false, features = ["tokio"], optional = true }
+rq037 = { package = "rusqlite", version = "0.37", optional = true }
 
 [dev-dependencies]
 proptest = "1"
 tokio = { version = "1", features = ["full"] }
-rusqlite = { version = "0.31", features = ["bundled"] }
+# No rusqlite dev-dependency: dev-dependencies cannot be optional, so a fixed
+# one would pin a single track.  Tests reach the active track's `rusqlite` and
+# `rusqlite_isle` through the `mlua_batteries::sqlite_backend` re-export.

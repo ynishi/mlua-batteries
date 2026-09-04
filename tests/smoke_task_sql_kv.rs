@@ -9,16 +9,19 @@
 
 #![cfg(all(feature = "task", feature = "sql", feature = "kv"))]
 
-use std::sync::{Arc, Mutex};
-
 use mlua::prelude::*;
-use rusqlite::Connection;
 use tokio::task::LocalSet;
 
-fn open_in_memory_pair() -> (Arc<Mutex<Connection>>, Arc<rusqlite::InterruptHandle>) {
-    let conn = Connection::open_in_memory().expect("open :memory:");
-    let interrupt = Arc::new(conn.get_interrupt_handle());
-    (Arc::new(Mutex::new(conn)), interrupt)
+// The active track's `rusqlite-isle`, reached through the crate so the test
+// does not need a dev-dependency pinned to one cluster.
+use mlua_batteries::sqlite_backend::rusqlite_isle::{AsyncIsle, AsyncIsleDriver};
+
+/// An in-memory isle plus its driver.  The driver must stay alive for as long
+/// as the handle is used — dropping it tears the connection thread down.
+async fn open_isle() -> (AsyncIsle, AsyncIsleDriver) {
+    AsyncIsle::open_in_memory(|_conn| Ok(()))
+        .await
+        .expect("open :memory: isle")
 }
 
 fn make_lua() -> Lua {
@@ -116,8 +119,8 @@ fn sql_query_and_exec_round_trip() {
     local.block_on(&rt, async {
         let lua = make_lua();
         mlua_batteries::task::register(&lua).unwrap();
-        let (conn, interrupt) = open_in_memory_pair();
-        mlua_batteries::sql::register(&lua, conn, interrupt).unwrap();
+        let (isle, _driver) = open_isle().await;
+        mlua_batteries::sql::register(&lua, isle).unwrap();
 
         let result: i64 = lua
             .load(
@@ -149,8 +152,8 @@ fn sql_null_sentinel_round_trip() {
     local.block_on(&rt, async {
         let lua = make_lua();
         mlua_batteries::task::register(&lua).unwrap();
-        let (conn, interrupt) = open_in_memory_pair();
-        mlua_batteries::sql::register(&lua, conn, interrupt).unwrap();
+        let (isle, _driver) = open_isle().await;
+        mlua_batteries::sql::register(&lua, isle).unwrap();
 
         let is_null: bool = lua
             .load(
@@ -180,8 +183,8 @@ fn sql_zero_row_result_encodes_as_array() {
     local.block_on(&rt, async {
         let lua = make_lua_with_std_modules();
         mlua_batteries::task::register(&lua).unwrap();
-        let (conn, interrupt) = open_in_memory_pair();
-        mlua_batteries::sql::register(&lua, conn, interrupt).unwrap();
+        let (isle, _driver) = open_isle().await;
+        mlua_batteries::sql::register(&lua, isle).unwrap();
 
         let ok: bool = lua
             .load(
@@ -220,8 +223,8 @@ fn kv_empty_list_encodes_as_array() {
     local.block_on(&rt, async {
         let lua = make_lua_with_std_modules();
         mlua_batteries::task::register(&lua).unwrap();
-        let (conn, interrupt) = open_in_memory_pair();
-        mlua_batteries::kv::register(&lua, conn, interrupt).unwrap();
+        let (isle, _driver) = open_isle().await;
+        mlua_batteries::kv::register(&lua, isle).await.unwrap();
 
         let ok: bool = lua
             .load(
@@ -257,8 +260,8 @@ fn kv_set_get_list_delete() {
     local.block_on(&rt, async {
         let lua = make_lua();
         mlua_batteries::task::register(&lua).unwrap();
-        let (conn, interrupt) = open_in_memory_pair();
-        mlua_batteries::kv::register(&lua, conn, interrupt).unwrap();
+        let (isle, _driver) = open_isle().await;
+        mlua_batteries::kv::register(&lua, isle).await.unwrap();
 
         let ok: bool = lua
             .load(
@@ -297,8 +300,8 @@ fn kv_preserves_empty_array_round_trip() {
     local.block_on(&rt, async {
         let lua = make_lua_with_std_modules();
         mlua_batteries::task::register(&lua).unwrap();
-        let (conn, interrupt) = open_in_memory_pair();
-        mlua_batteries::kv::register(&lua, conn, interrupt).unwrap();
+        let (isle, _driver) = open_isle().await;
+        mlua_batteries::kv::register(&lua, isle).await.unwrap();
 
         let ok: bool = lua
             .load(
@@ -339,8 +342,8 @@ fn kv_empty_table_still_round_trips_as_object() {
     local.block_on(&rt, async {
         let lua = make_lua_with_std_modules();
         mlua_batteries::task::register(&lua).unwrap();
-        let (conn, interrupt) = open_in_memory_pair();
-        mlua_batteries::kv::register(&lua, conn, interrupt).unwrap();
+        let (isle, _driver) = open_isle().await;
+        mlua_batteries::kv::register(&lua, isle).await.unwrap();
 
         let ok: bool = lua
             .load(
@@ -375,9 +378,9 @@ fn kv_null_sentinel_and_empty_array_coexist() {
     local.block_on(&rt, async {
         let lua = make_lua_with_std_modules();
         mlua_batteries::task::register(&lua).unwrap();
-        let (conn, interrupt) = open_in_memory_pair();
-        mlua_batteries::sql::register(&lua, Arc::clone(&conn), Arc::clone(&interrupt)).unwrap();
-        mlua_batteries::kv::register(&lua, conn, interrupt).unwrap();
+        let (isle, _driver) = open_isle().await;
+        mlua_batteries::sql::register(&lua, isle.clone()).unwrap();
+        mlua_batteries::kv::register(&lua, isle).await.unwrap();
 
         let ok: bool = lua
             .load(
@@ -408,8 +411,8 @@ fn kv_rejects_invalid_namespace() {
     local.block_on(&rt, async {
         let lua = make_lua();
         mlua_batteries::task::register(&lua).unwrap();
-        let (conn, interrupt) = open_in_memory_pair();
-        mlua_batteries::kv::register(&lua, conn, interrupt).unwrap();
+        let (isle, _driver) = open_isle().await;
+        mlua_batteries::kv::register(&lua, isle).await.unwrap();
 
         let err = lua
             .load(r#"std.kv.set("bad/ns", "k", "v")"#)

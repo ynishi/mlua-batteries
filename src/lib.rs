@@ -88,6 +88,8 @@ pub mod regex;
 pub mod schema;
 #[cfg(feature = "sql")]
 pub mod sql;
+#[cfg(feature = "sql")]
+pub mod sqlite_backend;
 #[cfg(feature = "string")]
 pub mod string;
 #[cfg(feature = "task")]

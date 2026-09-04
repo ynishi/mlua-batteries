@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-04
+
+Current track: `rusqlite 0.37` / `libsqlite3-sys 0.35`.
+
+### Changed
+
+- **BREAKING** — `std.sql` / `std.kv` are now built on
+  [`rusqlite-isle`](https://crates.io/crates/rusqlite-isle) instead of a
+  hand-rolled `Arc<Mutex<Connection>>` + `spawn_blocking` + `InterruptHandle`
+  arrangement. The Lua-side API (`std.sql.query` / `exec` / `null`,
+  `std.kv.get` / `set` / `delete` / `list`) is unchanged; what changes is how
+  a host wires the bridges:
+  - `sql::register(lua, conn, interrupt)` → `sql::register(lua, isle)`, where
+    `isle` is an `AsyncIsle` clone. Same for `register_with`.
+  - `kv::register` / `kv::register_with` are now **`async`** — the `__kv`
+    table is created through the isle before `std.kv` is exposed. Hosts that
+    prefer to do it at open time can call the new public
+    `kv::init_schema` from the isle's `init` closure.
+  - The host now owns an `AsyncIsle` + `AsyncIsleDriver` (the driver shuts the
+    connection thread down) instead of a `Connection` and its
+    `InterruptHandle`. File path, `busy_timeout` and `journal_mode` remain
+    host-side concerns, applied in the isle's `init` closure or through
+    `AsyncIsleBuilder::wal`.
+  - Cancellation semantics are preserved: jobs are submitted with
+    `spawn_call`, whose task cancels on drop, so an enclosing `task.scope` /
+    `task.with_timeout` firing — or the `SqlConfig` query timeout elapsing —
+    still interrupts the running statement. `SqlConfig` itself is unchanged.
+  - `std.kv` writes (`set` / `delete`) now run inside a `BEGIN IMMEDIATE`
+    transaction, taking the write lock up front instead of risking the
+    timeout-bypassing deferred upgrade under cross-process contention.
+- **BREAKING** — the `sql` feature no longer pulls a bare `rusqlite`
+  dependency of its own choosing; it pulls the `rusqlite-isle` minor and the
+  matching `rusqlite` cluster for this release line's track (see below).
+
+### Added
+
+- `sqlite_backend` module: re-exports the active `rusqlite` and
+  `rusqlite_isle`, so hosts can name the bridge's exact versions
+  (`mlua_batteries::sqlite_backend::rusqlite_isle::AsyncIsle`) without
+  declaring a second dependency that could drift onto another cluster.
+- `sqlite-bundled` feature, **enabled by default**, forwarding to
+  `rusqlite/bundled`. Opt out with `default-features = false` to link the
+  system SQLite. It is a weak (`dep?/`) forward, so it is inert unless `sql`
+  is enabled.
+
+### Notes
+
+- **SQLite version tracks.** `libsqlite3-sys` declares `links = "sqlite3"`,
+  and cargo rejects a manifest that names two rusqlite clusters as optional
+  dependencies even when only one is activated — the check happens during
+  dependency resolution, not after feature activation. Serving several
+  clusters therefore requires separate published versions, as `rusqlite-isle`
+  does; it cannot be done with mutually exclusive features inside one
+  version. This line (`0.4`) tracks `rusqlite 0.37`.
+
 ## [0.3.1] - 2026-09-03
 
 ### Added
