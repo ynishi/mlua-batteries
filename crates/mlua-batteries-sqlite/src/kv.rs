@@ -24,8 +24,8 @@
 //! `std.sql` user database so backup / WAL / page-cache lifecycles do not
 //! collide) and passes a clone of the handle.  Cancellation and per-query
 //! timeout are inherited from the [`crate::sql::SqlConfig`] in
-//! `lua.app_data`; the `rusqlite` / `rusqlite-isle` versions come from the
-//! track feature (see [`crate::sqlite_backend`]).
+//! `lua.app_data`; the `rusqlite` / `rusqlite-isle` versions come from this
+//! release line (see [the crate docs](crate)).
 //!
 //! Registration is `async` because the `__kv` table is created through the
 //! isle before the module is exposed to Lua.  Hosts that would rather do it
@@ -38,9 +38,11 @@
 
 use mlua::prelude::*;
 
-use crate::sql::{
-    json_to_lua_preserving_null, lua_to_json_preserving_null, run_job, sql_query_timeout, SqlConfig,
+use mlua_batteries::json::{
+    array_metatable, json_to_lua_preserving_null, lua_to_json_preserving_null,
 };
+
+use crate::sql::{run_job, sql_query_timeout, SqlConfig};
 use crate::sqlite_backend::rusqlite::{self, Connection, OptionalExtension};
 use crate::sqlite_backend::rusqlite_isle::AsyncIsle;
 
@@ -256,7 +258,7 @@ pub async fn register_with(lua: &Lua, isle: AsyncIsle, cfg: SqlConfig) -> LuaRes
                         // Nothing matched: tag the empty list with the shared
                         // `__jsontype = "array"` metatable so that
                         // `json.encode(kv.list(...))` renders `[]`, not `{}`.
-                        tbl.set_metatable(Some(crate::json::array_metatable(&lua)?))?;
+                        tbl.set_metatable(Some(array_metatable(&lua)?))?;
                     }
                     Ok(LuaValue::Table(tbl))
                 }

@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-04
+
+### Removed
+
+- **BREAKING** — `std.sql` / `std.kv` (the `sql` / `kv` features, the `sql`,
+  `kv` and `sqlite_backend` modules, and the `sqlite-bundled` feature) moved
+  to the new [`mlua-batteries-sqlite`](https://crates.io/crates/mlua-batteries-sqlite)
+  crate, kept in this repo under `crates/mlua-batteries-sqlite`. The Lua-side
+  API and the host wiring are unchanged from 0.4.0 — only the crate and the
+  module path move:
+
+  ```toml
+  mlua-batteries = { version = "0.5", features = ["task"] }
+  mlua-batteries-sqlite = "0.5"
+  ```
+
+  ```rust,ignore
+  // 0.4.0
+  mlua_batteries::sql::register(&lua, isle.clone())?;
+  mlua_batteries::kv::register(&lua, isle).await?;
+  // 0.5.0
+  mlua_batteries_sqlite::sql::register(&lua, isle.clone())?;
+  mlua_batteries_sqlite::kv::register(&lua, isle).await?;
+  ```
+
+  The reason is the SQLite stack, not the code. `libsqlite3-sys` declares
+  `links = "sqlite3"`, so a build graph holds exactly one of its major
+  versions and cargo enforces that during dependency *resolution* — no crate
+  can offer several clusters behind mutually exclusive features, so serving
+  more than one cluster requires more than one published version line. That
+  constraint now sits on the bridge crate, leaving this crate's version line
+  free for its own features and leaving consumers who do not need SQLite free
+  of a C library.
+
+### Added
+
+- `json::json_to_lua_preserving_null` / `json::lua_to_json_preserving_null`:
+  the NULL-preserving converters, previously private to the `sql` module.
+  They keep JSON `null` as the `LightUserData(null_ptr)` sentinel (Lua sees
+  `std.sql.null`) instead of lowering it to `nil`, so a value survives a
+  round trip through a table.
+- `json::array_metatable` / `json::wants_empty_array` are now public, and
+  `json::PRESERVING_NULL_MAX_DEPTH` names the converters' nesting limit.
+  Bridges outside this crate need them to tag empty arrays with the *same*
+  metatable instance `std.json` uses — that shared instance is what makes an
+  empty array survive `kv.set` / `kv.get` as `[]` rather than `{}`.
+
+### Changed
+
+- The repo is now a cargo workspace: `mlua-batteries` stays at the root and
+  `crates/mlua-batteries-sqlite` joins it as a member. Identity metadata
+  (license, authors, repository, homepage, edition, MSRV) moved to
+  `[workspace.package]` and is inherited by both.
+
 ## [0.4.0] - 2026-09-04
 
 Current track: `rusqlite 0.37` / `libsqlite3-sys 0.35`.
