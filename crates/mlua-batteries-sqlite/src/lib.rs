@@ -31,6 +31,12 @@
 //! crate is built against is re-exported as [`rusqlite`]; name the host's
 //! types through it.
 //!
+//! Hosts that already run SQLite on a
+//! [`rusqlite-isle`](https://crates.io/crates/rusqlite-isle) connection thread
+//! want
+//! [`mlua-batteries-sqlite-isle`](https://crates.io/crates/mlua-batteries-sqlite-isle)
+//! instead — the same Lua API on an `AsyncIsle`, on the same rusqlite cluster.
+//!
 //! # Wiring
 //!
 //! The host owns the [`rusqlite::Connection`] (file path, `busy_timeout` and

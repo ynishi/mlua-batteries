@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/mlua-batteries-sqlite"]
+members = ["crates/mlua-batteries-sqlite", "crates/mlua-batteries-sqlite-isle"]
 
 # Identity shared by every crate in this repo. Members inherit with
 # `<field>.workspace = true` rather than restating the values.

@@ -1,0 +1,60 @@
+[package]
+name = "mlua-batteries-sqlite-isle"
+# The minor mirrors `rusqlite-isle`'s numbering so the two are readable side
+# by side. Only this line is published:
+#
+#   0.5.x  ->  rusqlite-isle 0.5  ->  rusqlite 0.37  ->  libsqlite3-sys 0.35
+#
+# Lower lines (0.3.x -> rusqlite 0.32, 0.2.x -> rusqlite 0.31) can be opened
+# if a consumer needs that cluster.
+#
+# `libsqlite3-sys` declares `links = "sqlite3"`, so one build graph holds one
+# cluster and cargo enforces it at dependency-resolution time — which is why
+# the track is a version line rather than a feature.
+version = "0.5.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "SQLite bridge (std.sql / std.kv) for mlua-batteries, built on rusqlite-isle"
+readme = "README.md"
+keywords = ["lua", "mlua", "sqlite", "rusqlite", "kv"]
+categories = ["database", "api-bindings"]
+
+[features]
+default = ["sqlite-bundled"]
+# Build and link SQLite from source (`rusqlite/bundled`). On by default; turn
+# it off with `default-features = false` to link the system library instead.
+sqlite-bundled = ["rusqlite-isle/bundled"]
+
+[dependencies]
+mlua = { version = "0.11", features = ["lua54", "vendored"] }
+# `task` supplies the CancelToken this bridge races against; `json` supplies
+# the NULL-preserving converters and the shared empty-array metatable.
+#
+# NOTE: mlua-batteries は crates.io に公開済の crate であり、 この path は
+# 同一 repo の workspace root package (../..) を指す in-repo 参照。
+# 経緯: 0.5.0 で std.sql / std.kv を本 crate に切り出したため、 bridge が
+#       facade に依存する構造になった。 切り出し時点で 0.5.0 は未公開のため、
+#       version だけでは local の build / test が resolve できない。
+# 影響: version を併記しているので `cargo publish` は path を落として
+#       `mlua-batteries = "0.5"` の registry dep として公開する。 公開後の
+#       consumer に path は届かず、 workspace 外からの解決も壊れない。
+#       ただし本 crate の publish は mlua-batteries 0.5.0 の publish 後にのみ
+#       成立する (publish 順序 = facade → bridge)。
+mlua-batteries = { path = "../..", version = "0.5", default-features = false, features = ["task", "json"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
+tracing = "0.1"
+
+# `rusqlite-isle` drives the connection thread; the bare `rusqlite` dep is
+# still needed because the isle does not re-export it and the converters name
+# `types::{Value, ValueRef}` directly. Both must resolve to the same cluster —
+# switching tracks is an edit of these two lines plus the version above.
+rusqlite-isle = { version = "0.5", default-features = false, features = ["tokio"] }
+rusqlite = "0.37"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }

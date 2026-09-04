@@ -144,17 +144,19 @@ See the module-level rustdoc on `src/task/mod.rs` for the full API.
 
 ## SQLite: `std.sql` / `std.kv`
 
-The SQLite bridges live in a companion crate, [`mlua-batteries-sqlite`](crates/mlua-batteries-sqlite) (`crates/mlua-batteries-sqlite` in this repo). They were part of this crate up to 0.4.0 and moved out in 0.5.0.
+The SQLite bridges live in companion crates. They were part of this crate up to 0.4.0 and moved out in 0.5.0. [`mlua-batteries-sqlite`](crates/mlua-batteries-sqlite) is the default: a host-owned `rusqlite::Connection` behind `Arc<Mutex<_>>`, with statements run in `tokio::task::spawn_blocking`. [`mlua-batteries-sqlite-isle`](crates/mlua-batteries-sqlite-isle) is the variant for hosts that already run SQLite on a [`rusqlite-isle`](https://crates.io/crates/rusqlite-isle) connection thread. The Lua-side API is the same; only the host wiring differs.
 
 ```toml
 [dependencies]
 mlua-batteries = { version = "0.5", features = ["task"] }
-mlua-batteries-sqlite = "0.6"
+mlua-batteries-sqlite = "0.6"          # default, sync model
+# ...or, on a rusqlite-isle AsyncIsle:
+mlua-batteries-sqlite-isle = "0.5"
 ```
 
 The reason for the split is the SQLite stack, not the code. `libsqlite3-sys` declares `links = "sqlite3"`, so a build graph holds exactly one of its major versions, and cargo enforces that while *resolving* dependencies — meaning no crate can offer several clusters behind mutually exclusive features. Serving more than one cluster requires more than one published version line. Keeping that constraint on the small bridge crate leaves this crate's version line free for its own features, and leaves consumers who do not need SQLite free of a C library.
 
-The companion crate's README carries the cluster table and the wiring contract.
+The companion crates' READMEs carry the cluster table and the wiring contract.
 
 ## Configuration
 
