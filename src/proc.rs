@@ -238,7 +238,11 @@ pub fn run_pipeline(spec: &PipelineSpec) -> Result<PipelineResult, String> {
                     let _ = c.kill();
                     let _ = c.wait();
                 }
-                return Err(format!("stage {} ({}): spawn failed: {e}", i + 1, st.argv[0]));
+                return Err(format!(
+                    "stage {} ({}): spawn failed: {e}",
+                    i + 1,
+                    st.argv[0]
+                ));
             }
         };
 
@@ -297,7 +301,9 @@ pub fn run_pipeline(spec: &PipelineSpec) -> Result<PipelineResult, String> {
 
     let mut stages_out = Vec::with_capacity(n);
     for (i, handle) in stderr_readers.into_iter().enumerate() {
-        let stderr_bytes = handle.map(|h| h.join().unwrap_or_default()).unwrap_or_default();
+        let stderr_bytes = handle
+            .map(|h| h.join().unwrap_or_default())
+            .unwrap_or_default();
         let (exit_code, duration_ms) =
             statuses[i].unwrap_or((None, start.elapsed().as_millis() as u64));
         let stdout = if i == n - 1 {
@@ -359,15 +365,11 @@ fn parse_pipeline_spec(stages: LuaTable, opts: Option<LuaTable>) -> Result<Pipel
             cwd = Some(PathBuf::from(s));
         }
         if let Ok(t) = o.get::<LuaTable>("stdin_from") {
-            let p: String = t
-                .get("path")
-                .map_err(|e| format!("stdin_from.path: {e}"))?;
+            let p: String = t.get("path").map_err(|e| format!("stdin_from.path: {e}"))?;
             stdin_from = Some(PathBuf::from(p));
         }
         if let Ok(t) = o.get::<LuaTable>("stdout_to") {
-            let p: String = t
-                .get("path")
-                .map_err(|e| format!("stdout_to.path: {e}"))?;
+            let p: String = t.get("path").map_err(|e| format!("stdout_to.path: {e}"))?;
             let append = t.get::<bool>("append").unwrap_or(false);
             stdout_to = Some(StdoutTo {
                 path: PathBuf::from(p),
@@ -454,7 +456,11 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("mlua_bat_proc_{}_{}_{name}", std::process::id(), nanos))
+        std::env::temp_dir().join(format!(
+            "mlua_bat_proc_{}_{}_{name}",
+            std::process::id(),
+            nanos
+        ))
     }
 
     #[test]
@@ -563,8 +569,8 @@ mod tests {
 
     #[test]
     fn spawn_failure_is_setup_err() {
-        let err = run_pipeline(&spec(vec![stage(&["/nonexistent/mlua_bat_no_such_bin"])]))
-            .unwrap_err();
+        let err =
+            run_pipeline(&spec(vec![stage(&["/nonexistent/mlua_bat_no_such_bin"])])).unwrap_err();
         assert!(err.contains("spawn failed"), "got: {err}");
     }
 
@@ -577,8 +583,7 @@ mod tests {
     #[test]
     fn captured_stdout_is_tail_capped() {
         // 200_000 bytes of zeros; tail cap keeps the last 64 KiB.
-        let r = run_pipeline(&spec(vec![stage(&["head", "-c", "200000", "/dev/zero"])]))
-            .unwrap();
+        let r = run_pipeline(&spec(vec![stage(&["head", "-c", "200000", "/dev/zero"])])).unwrap();
         assert!(r.ok);
         assert_eq!(r.stages[0].stdout.len(), OUTPUT_TAIL_MAX_BYTES);
     }

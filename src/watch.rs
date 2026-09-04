@@ -395,8 +395,7 @@ pub fn restore_blob(base_dir: &Path, dest: &Path, sha: &str) -> Result<usize, St
     let blob_path = base_dir.join("store").join("objects").join(sha);
     let content = std::fs::read(&blob_path)
         .map_err(|_| format!("blob not found: {sha} ({})", blob_path.display()))?;
-    std::fs::write(dest, &content)
-        .map_err(|e| format!("cannot write {}: {e}", dest.display()))?;
+    std::fs::write(dest, &content).map_err(|e| format!("cannot write {}: {e}", dest.display()))?;
     Ok(content.len())
 }
 
@@ -485,16 +484,18 @@ pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
 
     t.set(
         "restore",
-        lua.create_function(|lua, (path, sha, opts): (String, String, Option<LuaTable>)| {
-            let base = resolve_base_dir(&opts)?;
-            let size =
-                restore_blob(&base, Path::new(&path), &sha).map_err(LuaError::external)?;
-            let out = lua.create_table()?;
-            out.set("restored", path)?;
-            out.set("sha", sha)?;
-            out.set("size", size)?;
-            Ok(out)
-        })?,
+        lua.create_function(
+            |lua, (path, sha, opts): (String, String, Option<LuaTable>)| {
+                let base = resolve_base_dir(&opts)?;
+                let size =
+                    restore_blob(&base, Path::new(&path), &sha).map_err(LuaError::external)?;
+                let out = lua.create_table()?;
+                out.set("restored", path)?;
+                out.set("sha", sha)?;
+                out.set("size", size)?;
+                Ok(out)
+            },
+        )?,
     )?;
 
     Ok(t)
@@ -565,7 +566,11 @@ mod tests {
         record_snapshot(&config, &mut state, &file, "modify").unwrap();
         record_snapshot(&config, &mut state, &file, "close_write").unwrap();
         let lines = journal_lines(&config);
-        assert_eq!(lines.len(), 1, "same-sha burst must journal once: {lines:?}");
+        assert_eq!(
+            lines.len(),
+            1,
+            "same-sha burst must journal once: {lines:?}"
+        );
         assert_eq!(lines[0]["event"], "create");
         assert_eq!(blob_count(&config), 1);
 
@@ -604,7 +609,11 @@ mod tests {
         assert_eq!(lines[1]["event"], "delete");
         assert_eq!(lines[2]["event"], "create");
         assert_eq!(lines[0]["sha"], lines[2]["sha"], "same content, same blob");
-        assert_eq!(blob_count(&config), 1, "identical content dedupes to one blob");
+        assert_eq!(
+            blob_count(&config),
+            1,
+            "identical content dedupes to one blob"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&base);
@@ -639,9 +648,15 @@ mod tests {
         assert!(is_excluded(&root, Path::new("/w/target/debug/foo"), &ex));
         assert!(is_excluded(&root, Path::new("/w/a/node_modules/b.js"), &ex));
         assert!(is_excluded(&root, Path::new("/w/.worktrees/t/x.rs"), &ex));
-        assert!(is_excluded(&root, Path::new("/outside/x.rs"), &ex), "outside root");
+        assert!(
+            is_excluded(&root, Path::new("/outside/x.rs"), &ex),
+            "outside root"
+        );
         assert!(!is_excluded(&root, Path::new("/w/src/main.rs"), &ex));
-        assert!(!is_excluded(&root, Path::new("/w/targets/x.rs"), &ex), "prefix only");
+        assert!(
+            !is_excluded(&root, Path::new("/w/targets/x.rs"), &ex),
+            "prefix only"
+        );
     }
 
     #[test]
@@ -721,20 +736,20 @@ mod tests {
         };
 
         assert!(
-            wait_for(&|lines| lines
-                .iter()
-                .any(|l| l["path"].as_str().is_some_and(|p| p.ends_with("watched.txt"))
-                    && l["sha"].is_string())),
+            wait_for(&|lines| lines.iter().any(|l| l["path"]
+                .as_str()
+                .is_some_and(|p| p.ends_with("watched.txt"))
+                && l["sha"].is_string())),
             "content event for watched.txt not journaled; journal = {:?}",
             journal_lines(&config)
         );
 
         std::fs::remove_file(&file).unwrap();
         assert!(
-            wait_for(&|lines| lines
-                .iter()
-                .any(|l| l["event"] == "delete"
-                    && l["path"].as_str().is_some_and(|p| p.ends_with("watched.txt")))),
+            wait_for(&|lines| lines.iter().any(|l| l["event"] == "delete"
+                && l["path"]
+                    .as_str()
+                    .is_some_and(|p| p.ends_with("watched.txt")))),
             "delete event not journaled; journal = {:?}",
             journal_lines(&config)
         );
@@ -745,7 +760,9 @@ mod tests {
             .into_iter()
             .filter(|l| {
                 l["sha"].is_string()
-                    && l["path"].as_str().is_some_and(|p| p.ends_with("watched.txt"))
+                    && l["path"]
+                        .as_str()
+                        .is_some_and(|p| p.ends_with("watched.txt"))
             })
             .collect();
         assert_eq!(
