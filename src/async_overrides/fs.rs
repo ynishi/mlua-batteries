@@ -84,7 +84,7 @@ pub(super) fn install(lua: &Lua, fs_tbl: &LuaTable) -> LuaResult<()> {
     fs_tbl.set(
         "write_binary",
         lua.create_async_function(
-            |lua: Lua, (path, content): (String, mlua::String)| async move {
+            |lua: Lua, (path, content): (String, mlua::LuaString)| async move {
                 let access = check_path(&lua, &path, PathOp::Write)?;
                 // Copy the bytes out of the VM before leaving the thread —
                 // `mlua::String` borrows from the Lua heap and is `!Send`.

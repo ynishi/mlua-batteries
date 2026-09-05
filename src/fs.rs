@@ -187,7 +187,7 @@ pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
 
     t.set(
         "write_binary",
-        lua.create_function(|lua, (path, content): (String, mlua::String)| {
+        lua.create_function(|lua, (path, content): (String, mlua::LuaString)| {
             let access = check_path(lua, &path, PathOp::Write)?;
             access
                 .write(content.as_bytes())
@@ -900,7 +900,7 @@ mod tests {
 
         let lua = Lua::new();
         crate::register_all(&lua, "std").unwrap();
-        let result: mlua::String = lua
+        let result: mlua::LuaString = lua
             .load(&format!(r#"return std.fs.read_binary("{path_str}")"#))
             .eval()
             .unwrap();

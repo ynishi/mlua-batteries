@@ -97,8 +97,6 @@ pub mod path;
 pub mod proc;
 #[cfg(feature = "regex")]
 pub mod regex;
-#[cfg(feature = "schema")]
-pub mod schema;
 #[cfg(feature = "string")]
 pub mod string;
 #[cfg(feature = "task")]
@@ -173,7 +171,6 @@ pub fn register_all_with(lua: &Lua, namespace: &str, config: Config) -> LuaResul
     register!("http", http);
     register!("llm", llm);
     register!("hash", hash);
-    register!("schema", schema);
     register!("proc", proc);
     register!("watch", watch);
 
@@ -224,7 +221,6 @@ pub fn module_entries() -> Vec<(&'static str, ModuleFactory)> {
     entry!("http", http);
     entry!("llm", llm);
     entry!("hash", hash);
-    entry!("schema", schema);
     entry!("proc", proc);
     entry!("watch", watch);
 

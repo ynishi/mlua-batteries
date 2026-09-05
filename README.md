@@ -4,7 +4,7 @@ Batteries-included standard library modules for [mlua](https://github.com/mlua-r
 
 Lua 5.4 scripts gain access to JSON, environment variables, filesystem, HTTP, hashing, LLM chat completion, structured async tasks, and SQLite-backed storage — all behind a configurable policy layer that can sandbox untrusted code.
 
-Core modules (`json`, `env`, `path`, `time`, `fs`, `http`, `hash`, `llm`, `string`, `regex`, `validate`, `log`, `uuid`, `base64`, `schema`, `sandbox`) are **synchronous (blocking)** and require no async runtime. The optional `task` module requires a `tokio` current-thread runtime driving a `LocalSet` (see the [Async modules](#async-modules) section), as do the `std.sql` / `std.kv` bridges in the companion [`mlua-batteries-sqlite`](crates/mlua-batteries-sqlite) crate.
+Core modules (`json`, `env`, `path`, `time`, `fs`, `http`, `hash`, `llm`, `string`, `regex`, `validate`, `log`, `uuid`, `base64`, `sandbox`) are **synchronous (blocking)** and require no async runtime. The optional `task` module requires a `tokio` current-thread runtime driving a `LocalSet` (see the [Async modules](#async-modules) section), as do the `std.sql` / `std.kv` bridges in the companion [`mlua-batteries-sqlite`](crates/mlua-batteries-sqlite) crate.
 
 ## Modules
 
@@ -24,7 +24,6 @@ Core modules (`json`, `env`, `path`, `time`, `fs`, `http`, `hash`, `llm`, `strin
 | `http` | `http` | HTTP client (`ureq`) |
 | `hash` | `hash` | SHA-256 hashing (`sha2`) |
 | `llm` | `llm` | Chat completion — OpenAI, Anthropic, Ollama |
-| `schema` | `schema` | JSON Schema validation (`schema-bridge`) |
 | `sandbox` | `sandbox` | Capability-based filesystem sandbox (`cap-std`) |
 | `proc` | `proc` | Typed argv pipeline spawn — no shell involved |
 | `watch` | `watch` | Filesystem versioning watcher — content-addressed store + JSONL journal (`notify`) |
@@ -196,7 +195,7 @@ All path arguments are UTF-8. Non-UTF-8 Lua strings are rejected at the `FromLua
 
 ## MSRV
 
-Rust **1.77** or later.
+Rust **1.88** or later.
 
 ## Contributing
 

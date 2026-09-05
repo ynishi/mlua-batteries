@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-05
+
+### Changed
+- **Breaking**: `mlua` dependency bumped from `0.11` to `0.12` in all three
+  workspace crates (`mlua-batteries`, `mlua-batteries-sqlite`,
+  `mlua-batteries-sqlite-isle`).  `mlua` types appear in the public API, so
+  consumers must move to `mlua 0.12` as well.
+- MSRV raised from 1.77 to 1.88 (required by `mlua 0.12`).
+- Source adjustments for `mlua 0.12`: `mlua::String` is now `mlua::LuaString`
+  (`fs::write_binary`, async override, one test); `ThreadStatus` moved to
+  `mlua::thread::ThreadStatus`; the coroutine driver handles the new
+  `ThreadStatus::Normal` variant (treated like `Running`: unreachable after
+  `resume()` returns).
+
+### Removed
+- **Breaking**: the `schema` feature, the `std.schema` module and the
+  `schema-bridge` dependency.  The module registered Rust-derived schemas
+  into one Lua VM's registry and validated through `std.validate`; the
+  supported path is now `schema-bridge-lshape`, which emits an lshape
+  `types.lua` from the same `Schema` IR and validates with `lshape` on the
+  Lua side, with no Rust-side registration and no `mlua` coupling.
+  Dropping it also removes the last `mlua ^0.11` edge from the dependency
+  graph (`schema-bridge-core 0.4.0`), which would otherwise conflict with
+  `mlua 0.12` on `mlua-sys`'s `links = "lua"` at resolution time.
+
 ## [0.5.1] - 2026-09-04
 
 ### Added

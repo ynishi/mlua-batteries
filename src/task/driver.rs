@@ -25,9 +25,8 @@ use std::task::{Context, Poll};
 use std::time::Instant;
 
 use mlua::prelude::*;
-use mlua::{
-    Function, MultiValue, ThreadStatus, UserData, UserDataMethods, UserDataRegistry, Value,
-};
+use mlua::thread::ThreadStatus;
+use mlua::{Function, MultiValue, UserData, UserDataMethods, UserDataRegistry, Value};
 use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
 use tracing::{info_span, Instrument};
@@ -274,9 +273,12 @@ async fn run_coroutine(lua: &Lua, func: Function) -> LuaResult<Value> {
                     }
                 }
             }
-            ThreadStatus::Running => {
+            // `Normal` (mlua 0.12+): active but not running, i.e. this thread
+            // resumed another coroutine.  Like `Running`, it cannot be observed
+            // here because `resume()` has already returned control to us.
+            ThreadStatus::Running | ThreadStatus::Normal => {
                 return Err(LuaError::external(
-                    "coroutine in Running state after resume (impossible)",
+                    "coroutine in Running/Normal state after resume (impossible)",
                 ));
             }
             ThreadStatus::Error => {

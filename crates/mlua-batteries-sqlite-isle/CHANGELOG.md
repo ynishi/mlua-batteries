@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-05
+
+Current track: `rusqlite-isle 0.5` / `rusqlite 0.37` / `libsqlite3-sys 0.35`.
+
+### Changed
+- **Breaking**: `mlua` bumped from `0.11` to `0.12`; depends on
+  `mlua-batteries 0.6`.  `mlua` types cross this crate's API, so consumers
+  must move to `mlua 0.12` together.  No source changes were needed.
+- The version line no longer mirrors `rusqlite-isle`'s minor: 0.6.x still
+  sits on the `rusqlite-isle 0.5` cluster.  The mapping is kept in
+  `Cargo.toml` next to `version`.
+- MSRV raised from 1.77 to 1.88 (required by `mlua 0.12`).
+
 ## [0.5.0] - 2026-09-04
 
 Current track: `rusqlite-isle 0.5` / `rusqlite 0.37` / `libsqlite3-sys 0.35`.
