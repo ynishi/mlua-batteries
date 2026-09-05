@@ -40,6 +40,19 @@
 //! // Lua: std.env.get("HOME")
 //! ```
 //!
+//! # Async
+//!
+//! The modules above are synchronous and need no runtime.  Two opt-in
+//! pieces are async, and both want a tokio current-thread runtime driving
+//! a `LocalSet`:
+//!
+//! - `task` — structured concurrency primitives (`std.task.*`).
+//! - `async_overrides` — replaces the blocking entries of an
+//!   already-registered namespace (`std.time.sleep`, `std.proc.pipeline`,
+//!   `std.http.*`, `std.fs.*`) with async ones, so they no longer park the
+//!   VM thread.  Same Lua-side API; opt in by calling it after
+//!   [`register_all`].
+//!
 //! # Custom configuration
 //!
 //! ```rust,ignore
@@ -60,6 +73,8 @@
 pub mod config;
 pub mod policy;
 
+#[cfg(feature = "task")]
+pub mod async_overrides;
 #[cfg(feature = "base64")]
 pub mod base64;
 #[cfg(feature = "env")]

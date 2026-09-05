@@ -32,7 +32,7 @@ use crate::util::{check_path, with_config};
 ///
 /// Returns the longest path prefix that contains no wildcard characters.
 /// For patterns without wildcards (literal paths), returns the parent directory.
-fn glob_base_dir(pattern: &str) -> String {
+pub(crate) fn glob_base_dir(pattern: &str) -> String {
     let path = Path::new(pattern);
     let mut base = PathBuf::new();
     let mut found_wildcard = false;
@@ -63,12 +63,83 @@ fn glob_base_dir(pattern: &str) -> String {
 }
 
 /// Strip leading `"./"` prefix for consistent path matching and output.
-fn strip_dot_slash(path: &str) -> &str {
+pub(crate) fn strip_dot_slash(path: &str) -> &str {
     path.strip_prefix("./").unwrap_or(path)
 }
 
+/// Compile a `fs.glob` pattern into a matcher.
+///
+/// Pure — no filesystem access.  The pattern is expected to have been
+/// normalised with [`strip_dot_slash`] first.
+pub(crate) fn compile_glob(normalized_pattern: &str) -> LuaResult<globset::GlobMatcher> {
+    Ok(globset::GlobBuilder::new(normalized_pattern)
+        .literal_separator(true)
+        .build()
+        .map_err(|e| LuaError::external(format!("fs.glob: invalid pattern: {e}")))?
+        .compile_matcher())
+}
+
+/// Collect every file under `access`, honouring the walk limits.
+///
+/// Returns a plain `Vec<String>` and a plain `String` error so both the
+/// blocking `std.fs.walk` and the `spawn_blocking` body of the async
+/// override in [`crate::async_overrides`] run the *same* traversal.  The
+/// caller wraps the error with [`LuaError::external`], which reproduces
+/// the message either path emits.
+pub(crate) fn walk_entries(
+    access: &crate::policy::FsAccess,
+    dir_path: &str,
+    max_depth: usize,
+    max_entries: usize,
+) -> Result<Vec<String>, String> {
+    access
+        .walk_files(Path::new(dir_path), max_depth, max_entries)
+        .map_err(|e| format!("fs.walk: {e}"))
+}
+
+/// Collect every file under `access` that `glob` matches, honouring the
+/// walk limits.  Sync / async counterpart of [`walk_entries`].
+pub(crate) fn glob_entries(
+    access: &crate::policy::FsAccess,
+    base_dir: &str,
+    glob: &globset::GlobMatcher,
+    max_depth: usize,
+    max_entries: usize,
+) -> Result<Vec<String>, String> {
+    access
+        .walk_files_filtered(
+            Path::new(base_dir),
+            &|path_str| {
+                let m = strip_dot_slash(path_str);
+                glob.is_match(m)
+            },
+            max_depth,
+            max_entries,
+        )
+        .map_err(|e| format!("fs.glob: {e}"))
+}
+
+/// Build the Lua array `std.fs.walk` returns from collected paths.
+pub(crate) fn walk_table(lua: &Lua, files: Vec<String>) -> LuaResult<LuaTable> {
+    let table = lua.create_table()?;
+    for (i, path) in files.into_iter().enumerate() {
+        table.set(i + 1, path)?;
+    }
+    Ok(table)
+}
+
+/// Build the Lua array `std.fs.glob` returns from collected paths.
+pub(crate) fn glob_table(lua: &Lua, files: Vec<String>) -> LuaResult<LuaTable> {
+    let table = lua.create_table()?;
+    for (i, path) in files.into_iter().enumerate() {
+        let normalized = strip_dot_slash(&path);
+        table.set(i + 1, normalized.to_string())?;
+    }
+    Ok(table)
+}
+
 /// Return an error if the file exceeds `Config::max_read_bytes` (when set).
-fn check_read_size(lua: &Lua, access: &crate::policy::FsAccess) -> LuaResult<()> {
+pub(crate) fn check_read_size(lua: &Lua, access: &crate::policy::FsAccess) -> LuaResult<()> {
     let limit = with_config(lua, |c| c.max_read_bytes)?;
     if let Some(max) = limit {
         let size = access.file_size().map_err(LuaError::external)?;
@@ -210,15 +281,10 @@ pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
             let (max_depth, max_entries) =
                 with_config(lua, |c| (c.max_walk_depth, c.max_walk_entries))?;
 
-            let files = access
-                .walk_files(Path::new(&dir_path), max_depth, max_entries)
-                .map_err(|e| LuaError::external(format!("fs.walk: {e}")))?;
+            let files = walk_entries(&access, &dir_path, max_depth, max_entries)
+                .map_err(LuaError::external)?;
 
-            let table = lua.create_table()?;
-            for (i, path) in files.into_iter().enumerate() {
-                table.set(i + 1, path)?;
-            }
-            Ok(table)
+            walk_table(lua, files)
         })?,
     )?;
 
@@ -232,11 +298,7 @@ pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
             let normalized_pattern = strip_dot_slash(&pattern);
 
             // Compile glob pattern (pure, no FS access)
-            let glob = globset::GlobBuilder::new(normalized_pattern)
-                .literal_separator(true)
-                .build()
-                .map_err(|e| LuaError::external(format!("fs.glob: invalid pattern: {e}")))?
-                .compile_matcher();
+            let glob = compile_glob(normalized_pattern)?;
 
             // Extract base directory for walking
             let base_dir = glob_base_dir(normalized_pattern);
@@ -244,25 +306,10 @@ pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
             // Resolve base directory through policy
             let access = check_path(lua, &base_dir, PathOp::List)?;
 
-            let files = access
-                .walk_files_filtered(
-                    Path::new(&base_dir),
-                    &|path_str| {
-                        let m = strip_dot_slash(path_str);
-                        glob.is_match(m)
-                    },
-                    max_depth,
-                    max_entries,
-                )
-                .map_err(|e| LuaError::external(format!("fs.glob: {e}")))?;
+            let files = glob_entries(&access, &base_dir, &glob, max_depth, max_entries)
+                .map_err(LuaError::external)?;
 
-            let table = lua.create_table()?;
-            for (i, path) in files.into_iter().enumerate() {
-                let normalized = strip_dot_slash(&path);
-                table.set(i + 1, normalized.to_string())?;
-            }
-
-            Ok(table)
+            glob_table(lua, files)
         })?,
     )?;
 

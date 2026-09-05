@@ -55,47 +55,227 @@ fn get_agent(lua: &Lua, timeout_secs: Option<u64>) -> LuaResult<ureq::Agent> {
     }
 }
 
-/// Apply headers to a bodyless request (GET/HEAD/DELETE), send, and build
-/// the `{status, body}` response table.
+/// Apply headers to a bodyless request (GET/HEAD/DELETE), send, and read
+/// the response.
 ///
 /// Factored out of the `request()` closure because ureq v3's typestate design
 /// (`RequestBuilder<WithoutBody>` vs `RequestBuilder<WithBody>`) requires
 /// separate code paths — there is no shared trait exposing `.header()`.
 fn send_without_body(
-    lua: &Lua,
     mut req: ureq::RequestBuilder<ureq::typestate::WithoutBody>,
     headers: &[(String, String)],
     max_bytes: u64,
-) -> LuaResult<LuaTable> {
+) -> Result<(u16, String), String> {
     for (k, v) in headers {
         req = req.header(k.as_str(), v.as_str());
     }
-    let mut resp = req.call().map_err(|e| LuaError::external(e.to_string()))?;
+    let mut resp = req.call().map_err(|e| e.to_string())?;
     let status = resp.status().as_u16();
     let body = read_body(resp.body_mut(), max_bytes)?;
-    build_response(lua, status, body)
+    Ok((status, body))
 }
 
-/// Apply headers to a body request (POST/PUT/PATCH), send, and build
-/// the `{status, body}` response table.
+/// Apply headers to a body request (POST/PUT/PATCH), send, and read the
+/// response.
 fn send_with_body(
-    lua: &Lua,
     mut req: ureq::RequestBuilder<ureq::typestate::WithBody>,
     headers: &[(String, String)],
     body: Option<&str>,
     content_type: &str,
     max_bytes: u64,
-) -> LuaResult<LuaTable> {
+) -> Result<(u16, String), String> {
     for (k, v) in headers {
         req = req.header(k.as_str(), v.as_str());
     }
     let mut resp = req
         .content_type(content_type)
         .send(body.unwrap_or("").as_bytes())
-        .map_err(|e| LuaError::external(e.to_string()))?;
+        .map_err(|e| e.to_string())?;
     let status = resp.status().as_u16();
     let body_text = read_body(resp.body_mut(), max_bytes)?;
-    build_response(lua, status, body_text)
+    Ok((status, body_text))
+}
+
+/// The HTTP methods `std.http.request` accepts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HttpMethod {
+    Get,
+    Head,
+    Delete,
+    Post,
+    Put,
+    Patch,
+}
+
+impl HttpMethod {
+    /// Parse a caller-supplied method name (case-insensitive).
+    fn parse(method: &str) -> LuaResult<Self> {
+        match method.to_uppercase().as_str() {
+            "GET" => Ok(Self::Get),
+            "HEAD" => Ok(Self::Head),
+            "DELETE" => Ok(Self::Delete),
+            "POST" => Ok(Self::Post),
+            "PUT" => Ok(Self::Put),
+            "PATCH" => Ok(Self::Patch),
+            other => Err(LuaError::external(format!(
+                "unsupported HTTP method: {other}"
+            ))),
+        }
+    }
+}
+
+/// A fully-resolved HTTP call — everything needed to reach the network,
+/// with no [`Lua`] handle left in it.
+///
+/// The policy check, the config reads and the agent selection all happen
+/// while building this value (they need the VM); [`HttpCall::run`] is then
+/// pure blocking I/O.  [`ureq::Agent`] is `Clone + Send` and every other
+/// field is owned, so the whole value is `Send + 'static` and the async
+/// overrides in [`crate::async_overrides`] can hand it to
+/// `tokio::task::spawn_blocking`.  Both paths go through the same value,
+/// so their behaviour cannot drift apart.
+pub(crate) struct HttpCall {
+    agent: ureq::Agent,
+    method: HttpMethod,
+    url: String,
+    headers: Vec<(String, String)>,
+    body: Option<String>,
+    /// Applied by the body-carrying methods only; ignored by GET / HEAD /
+    /// DELETE, which have no request body to describe.
+    content_type: String,
+    max_bytes: u64,
+}
+
+impl HttpCall {
+    /// Send the request and read the response body. **Blocking** — call it
+    /// on the VM thread (sync path) or inside `spawn_blocking` (async path).
+    ///
+    /// The error is a plain [`String`] rather than a [`LuaError`] so it can
+    /// cross a `spawn_blocking` boundary; the caller wraps it with
+    /// [`LuaError::external`], reproducing the message either path emits.
+    pub(crate) fn run(self) -> Result<(u16, String), String> {
+        let HttpCall {
+            agent,
+            method,
+            url,
+            headers,
+            body,
+            content_type,
+            max_bytes,
+        } = self;
+        match method {
+            HttpMethod::Get => send_without_body(agent.get(&url), &headers, max_bytes),
+            HttpMethod::Head => send_without_body(agent.head(&url), &headers, max_bytes),
+            HttpMethod::Delete => send_without_body(agent.delete(&url), &headers, max_bytes),
+            HttpMethod::Post => send_with_body(
+                agent.post(&url),
+                &headers,
+                body.as_deref(),
+                &content_type,
+                max_bytes,
+            ),
+            HttpMethod::Put => send_with_body(
+                agent.put(&url),
+                &headers,
+                body.as_deref(),
+                &content_type,
+                max_bytes,
+            ),
+            HttpMethod::Patch => send_with_body(
+                agent.patch(&url),
+                &headers,
+                body.as_deref(),
+                &content_type,
+                max_bytes,
+            ),
+        }
+    }
+}
+
+/// Resolve `std.http.get(url)` into an [`HttpCall`].
+pub(crate) fn prepare_get(lua: &Lua, url: String) -> LuaResult<HttpCall> {
+    check_url(lua, &url, "GET")?;
+    let max_bytes = with_config(lua, |c| c.max_response_bytes)?;
+    let agent = get_agent(lua, None)?;
+    Ok(HttpCall {
+        agent,
+        method: HttpMethod::Get,
+        url,
+        headers: Vec::new(),
+        body: None,
+        content_type: String::new(),
+        max_bytes,
+    })
+}
+
+/// Resolve `std.http.post(url, body, content_type?)` into an [`HttpCall`].
+pub(crate) fn prepare_post(
+    lua: &Lua,
+    url: String,
+    body: String,
+    content_type: Option<String>,
+) -> LuaResult<HttpCall> {
+    check_url(lua, &url, "POST")?;
+    let ct = content_type.unwrap_or_else(|| "application/json".to_string());
+    let max_bytes = with_config(lua, |c| c.max_response_bytes)?;
+    let agent = get_agent(lua, None)?;
+    Ok(HttpCall {
+        agent,
+        method: HttpMethod::Post,
+        url,
+        headers: Vec::new(),
+        body: Some(body),
+        content_type: ct,
+        max_bytes,
+    })
+}
+
+/// Resolve the `std.http.request(opts)` table into an [`HttpCall`].
+///
+/// The option reads happen in the same order the blocking implementation
+/// has always used, so a table with several problems still reports the
+/// same one first.
+pub(crate) fn prepare_request(lua: &Lua, opts: LuaTable) -> LuaResult<HttpCall> {
+    let method: String = opts.get("method")?;
+    let url: String = opts.get("url")?;
+    check_url(lua, &url, &method)?;
+    let body: Option<String> = match opts.get::<LuaValue>("body")? {
+        LuaValue::Nil => None,
+        LuaValue::String(s) => Some(s.to_str()?.to_string()),
+        other => {
+            return Err(LuaError::external(format!(
+                "body must be a string, got {}",
+                other.type_name()
+            )));
+        }
+    };
+
+    let (default_timeout, max_bytes) =
+        with_config(lua, |c| (c.http_timeout, c.max_response_bytes))?;
+    let timeout_secs: u64 = opts.get("timeout").unwrap_or(default_timeout.as_secs());
+    let agent = get_agent(lua, Some(timeout_secs))?;
+
+    // Collect headers
+    let mut headers: Vec<(String, String)> = Vec::new();
+    if let Ok(h) = opts.get::<LuaTable>("headers") {
+        for pair in h.pairs::<String, String>() {
+            headers.push(pair?);
+        }
+    }
+
+    let content_type: String = opts
+        .get("content_type")
+        .unwrap_or_else(|_| "application/json".into());
+
+    Ok(HttpCall {
+        agent,
+        method: HttpMethod::parse(&method)?,
+        url,
+        headers,
+        body,
+        content_type,
+        max_bytes,
+    })
 }
 
 pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
@@ -116,17 +296,8 @@ pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
     t.set(
         "get",
         lua.create_function(|lua, url: String| {
-            check_url(lua, &url, "GET")?;
-            let max_bytes = with_config(lua, |c| c.max_response_bytes)?;
-            let agent = get_agent(lua, None)?;
-
-            let mut resp = agent
-                .get(&url)
-                .call()
-                .map_err(|e| LuaError::external(e.to_string()))?;
-
-            let status = resp.status().as_u16();
-            let body = read_body(resp.body_mut(), max_bytes)?;
+            let call = prepare_get(lua, url)?;
+            let (status, body) = call.run().map_err(LuaError::external)?;
             build_response(lua, status, body)
         })?,
     )?;
@@ -135,19 +306,8 @@ pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
         "post",
         lua.create_function(
             |lua, (url, body, content_type): (String, String, Option<String>)| {
-                check_url(lua, &url, "POST")?;
-                let ct = content_type.as_deref().unwrap_or("application/json");
-                let max_bytes = with_config(lua, |c| c.max_response_bytes)?;
-                let agent = get_agent(lua, None)?;
-
-                let mut resp = agent
-                    .post(&url)
-                    .content_type(ct)
-                    .send(body.as_bytes())
-                    .map_err(|e| LuaError::external(e.to_string()))?;
-
-                let status = resp.status().as_u16();
-                let body = read_body(resp.body_mut(), max_bytes)?;
+                let call = prepare_post(lua, url, body, content_type)?;
+                let (status, body) = call.run().map_err(LuaError::external)?;
                 build_response(lua, status, body)
             },
         )?,
@@ -156,70 +316,9 @@ pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
     t.set(
         "request",
         lua.create_function(|lua, opts: LuaTable| {
-            let method: String = opts.get("method")?;
-            let url: String = opts.get("url")?;
-            check_url(lua, &url, &method)?;
-            let body: Option<String> = match opts.get::<LuaValue>("body")? {
-                LuaValue::Nil => None,
-                LuaValue::String(s) => Some(s.to_str()?.to_string()),
-                other => {
-                    return Err(LuaError::external(format!(
-                        "body must be a string, got {}",
-                        other.type_name()
-                    )));
-                }
-            };
-
-            let (default_timeout, max_bytes) =
-                with_config(lua, |c| (c.http_timeout, c.max_response_bytes))?;
-            let timeout_secs: u64 = opts.get("timeout").unwrap_or(default_timeout.as_secs());
-            let agent = get_agent(lua, Some(timeout_secs))?;
-
-            // Collect headers
-            let mut headers: Vec<(String, String)> = Vec::new();
-            if let Ok(h) = opts.get::<LuaTable>("headers") {
-                for pair in h.pairs::<String, String>() {
-                    headers.push(pair?);
-                }
-            }
-
-            let ct: String = opts
-                .get("content_type")
-                .unwrap_or_else(|_| "application/json".into());
-
-            let method_upper = method.to_uppercase();
-            match method_upper.as_str() {
-                "GET" => send_without_body(lua, agent.get(&url), &headers, max_bytes),
-                "HEAD" => send_without_body(lua, agent.head(&url), &headers, max_bytes),
-                "DELETE" => send_without_body(lua, agent.delete(&url), &headers, max_bytes),
-                "POST" => send_with_body(
-                    lua,
-                    agent.post(&url),
-                    &headers,
-                    body.as_deref(),
-                    &ct,
-                    max_bytes,
-                ),
-                "PUT" => send_with_body(
-                    lua,
-                    agent.put(&url),
-                    &headers,
-                    body.as_deref(),
-                    &ct,
-                    max_bytes,
-                ),
-                "PATCH" => send_with_body(
-                    lua,
-                    agent.patch(&url),
-                    &headers,
-                    body.as_deref(),
-                    &ct,
-                    max_bytes,
-                ),
-                other => Err(LuaError::external(format!(
-                    "unsupported HTTP method: {other}"
-                ))),
-            }
+            let call = prepare_request(lua, opts)?;
+            let (status, body) = call.run().map_err(LuaError::external)?;
+            build_response(lua, status, body)
         })?,
     )?;
 
@@ -227,11 +326,11 @@ pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
 }
 
 /// Read a response body with a byte limit.
-fn read_body(body: &mut ureq::Body, max_bytes: u64) -> LuaResult<String> {
+fn read_body(body: &mut ureq::Body, max_bytes: u64) -> Result<String, String> {
     body.with_config()
         .limit(max_bytes)
         .read_to_string()
-        .map_err(|e| LuaError::external(e.to_string()))
+        .map_err(|e| e.to_string())
 }
 
 /// Build a `{status, body}` Lua table from already-extracted values.
@@ -239,7 +338,7 @@ fn read_body(body: &mut ureq::Body, max_bytes: u64) -> LuaResult<String> {
 /// Avoids naming `http::Response<ureq::Body>` directly (ureq v3 does not
 /// re-export the `http::Response` type), keeping the module free of a
 /// direct `http` crate dependency.
-fn build_response(lua: &Lua, status: u16, body: String) -> LuaResult<LuaTable> {
+pub(crate) fn build_response(lua: &Lua, status: u16, body: String) -> LuaResult<LuaTable> {
     let result = lua.create_table()?;
     result.set("status", status)?;
     result.set("body", body)?;

@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-04
+
+Current track: `rusqlite 0.37` / `libsqlite3-sys 0.35`.
+
+### Changed
+
+- **BREAKING** — `std.sql` / `std.kv` are back on the execution model they
+  had in `mlua-batteries` 0.3.x: a host-owned `rusqlite::Connection` shared
+  through `Arc<Mutex<_>>`, statements run inside
+  `tokio::task::spawn_blocking`, and cancellation via the host's
+  `InterruptHandle`. The `rusqlite-isle` rewrite (0.5.0, inherited from
+  `mlua-batteries` 0.4.0) is dropped; it put a second thread-confined actor
+  under the Lua VM's own runtime and tied this crate's version line to the
+  isle's. The Lua-side API is unchanged; the host wiring reverts:
+  - `sql::register(lua, isle)` → `sql::register(lua, conn, interrupt)`, with
+    `conn: Arc<Mutex<Connection>>` and `interrupt: Arc<InterruptHandle>`.
+    Same for `register_with`.
+  - `kv::register` / `kv::register_with` are **synchronous** again; the
+    `__kv` table is created on the supplied connection at registration.
+    `kv::init_schema` stays public and now takes `&Connection`, for hosts
+    that prefer to own schema setup right after opening the connection.
+  - `std.kv` writes run as plain statements again (the 0.5.0
+    `BEGIN IMMEDIATE` wrapper went with the isle).
+- The `rusqlite_isle` re-export is gone. `rusqlite` is still re-exported so
+  hosts can name the bridge's exact version without a second dependency.
+- The version no longer mirrors `rusqlite-isle`'s minor. This crate sits on
+  one rusqlite cluster, decided by its single `rusqlite` dependency line;
+  see the README table.
+
+### Removed
+
+- `rusqlite-isle` dependency.
+
 ## [0.5.0] - 2026-09-04
 
 Current track: `rusqlite-isle 0.5` / `rusqlite 0.37` / `libsqlite3-sys 0.35`.

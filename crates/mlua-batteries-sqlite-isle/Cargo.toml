@@ -1,13 +1,24 @@
 [package]
-name = "mlua-batteries-sqlite"
-version = "0.6.0"
+name = "mlua-batteries-sqlite-isle"
+# The minor mirrors `rusqlite-isle`'s numbering so the two are readable side
+# by side. Only this line is published:
+#
+#   0.5.x  ->  rusqlite-isle 0.5  ->  rusqlite 0.37  ->  libsqlite3-sys 0.35
+#
+# Lower lines (0.3.x -> rusqlite 0.32, 0.2.x -> rusqlite 0.31) can be opened
+# if a consumer needs that cluster.
+#
+# `libsqlite3-sys` declares `links = "sqlite3"`, so one build graph holds one
+# cluster and cargo enforces it at dependency-resolution time — which is why
+# the track is a version line rather than a feature.
+version = "0.5.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "SQLite bridge (std.sql / std.kv) for mlua-batteries, built on rusqlite + tokio spawn_blocking"
+description = "SQLite bridge (std.sql / std.kv) for mlua-batteries, built on rusqlite-isle"
 readme = "README.md"
 keywords = ["lua", "mlua", "sqlite", "rusqlite", "kv"]
 categories = ["database", "api-bindings"]
@@ -16,7 +27,7 @@ categories = ["database", "api-bindings"]
 default = ["sqlite-bundled"]
 # Build and link SQLite from source (`rusqlite/bundled`). On by default; turn
 # it off with `default-features = false` to link the system library instead.
-sqlite-bundled = ["rusqlite/bundled"]
+sqlite-bundled = ["rusqlite-isle/bundled"]
 
 [dependencies]
 mlua = { version = "0.11", features = ["lua54", "vendored"] }
@@ -38,12 +49,12 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
 tracing = "0.1"
 
-# The one SQLite dependency. `libsqlite3-sys` declares `links = "sqlite3"`, so
-# a build graph holds exactly one of its major versions; the cluster this
-# crate sits on is decided here and nowhere else. Hosts reach the same
-# `rusqlite` through `mlua_batteries_sqlite::rusqlite` instead of declaring a
-# second dependency that could drift onto another cluster.
-rusqlite = { version = "0.37", default-features = false }
+# `rusqlite-isle` drives the connection thread; the bare `rusqlite` dep is
+# still needed because the isle does not re-export it and the converters name
+# `types::{Value, ValueRef}` directly. Both must resolve to the same cluster —
+# switching tracks is an edit of these two lines plus the version above.
+rusqlite-isle = { version = "0.5", default-features = false, features = ["tokio"] }
+rusqlite = "0.37"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

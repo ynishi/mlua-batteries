@@ -106,6 +106,13 @@ use scope::Scope;
 pub use cancel::{effective_token, CancelToken};
 pub use driver::Driver;
 
+/// Cancel-aware sleep, re-exported for [`crate::async_overrides`] so the
+/// `std.time.sleep` override observes cancellation exactly like
+/// `std.task.sleep` does.  That override is the only consumer, hence the
+/// `time` gate.
+#[cfg(feature = "time")]
+pub(crate) use cancel::race_sleep;
+
 /// Runtime configuration for the task bridge.
 ///
 /// The host is responsible for constructing this (typically from its own

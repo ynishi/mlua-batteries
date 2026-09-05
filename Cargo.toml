@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/mlua-batteries-sqlite"]
+members = ["crates/mlua-batteries-sqlite", "crates/mlua-batteries-sqlite-isle"]
 
 # Identity shared by every crate in this repo. Members inherit with
 # `<field>.workspace = true` rather than restating the values.
@@ -13,7 +13,7 @@ homepage = "https://github.com/ynishi/mlua-batteries"
 
 [package]
 name = "mlua-batteries"
-version = "0.5.0"
+version = "0.5.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

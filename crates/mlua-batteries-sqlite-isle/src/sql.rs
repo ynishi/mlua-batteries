@@ -5,33 +5,35 @@
 //! - `std.sql.exec(sql, params?)  -> { affected = N, last_id = M }`
 //! - `std.sql.null` — sentinel for SQL NULL on the Lua side
 //!
-//! rusqlite calls are executed inside `tokio::task::spawn_blocking` to avoid
-//! blocking the async runtime.  Lock acquisition is also inside spawn_blocking
-//! to prevent holding a Mutex guard across `.await` (await-holding-lock).
+//! Statements run on the connection thread owned by an
+//! [`AsyncIsle`](crate::rusqlite_isle::AsyncIsle), so no blocking call and no
+//! lock guard ever crosses an `.await` in this crate.
 //!
 //! # Wiring contract
 //!
-//! The host owns the [`rusqlite::Connection`] (file path / `busy_timeout` /
-//! `journal_mode` are host-side concerns, not this crate's) and its
-//! [`rusqlite::InterruptHandle`].  Pass them to [`register`] /
-//! [`register_with`] wrapped in `Arc<Mutex<_>>` / `Arc<_>`.  This crate
-//! does not open the database, does not read environment variables, and
-//! does not attempt to recover from a corrupt connection.
+//! The host owns the isle (file path / `busy_timeout` / `journal_mode` are
+//! host-side concerns, applied in the isle's `init` closure or through
+//! `AsyncIsleBuilder::wal`) and its `AsyncIsleDriver`, which is what shuts
+//! the connection thread down.  Pass a clone of the handle to [`register`] /
+//! [`register_with`].  This crate does not open the database, does not read
+//! environment variables, and does not attempt to recover from a corrupt
+//! connection.
 //!
-//! Which `rusqlite` those types come from is decided by this crate's
-//! dependency — see [`crate::rusqlite`] to name it without a second
-//! dependency that could drift onto another `libsqlite3-sys` cluster.
+//! Which `rusqlite` / `rusqlite-isle` versions those types come from is
+//! decided by the release line — see [the crate docs](crate) for the track
+//! table, and [`crate::rusqlite_isle`] to name them without a second
+//! dependency.
 //!
 //! # Cancellation integration
 //!
 //! Every query/exec races against the enclosing `task.scope` /
 //! `task.with_timeout`'s
 //! [`CancelToken`](mlua_batteries::task::CancelToken) via
-//! [`mlua_batteries::task::effective_token`].  When the token fires we call
-//! `sqlite3_interrupt` so the blocking thread returns quickly and the
-//! Mutex guard is released.
+//! [`mlua_batteries::task::effective_token`].  Jobs are submitted with
+//! `spawn_call`, whose `AsyncTask` cancels on drop: when the enclosing token
+//! fires, or the configured timeout elapses, the dropped task interrupts the
+//! running statement through the isle's own two-stage cancellation.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use mlua::prelude::*;
@@ -42,8 +44,9 @@ use tracing::warn;
 use crate::sqlite_backend::rusqlite::{
     self,
     types::{Value, ValueRef},
-    Connection, InterruptHandle,
+    Connection,
 };
+use crate::sqlite_backend::rusqlite_isle::{AsyncIsle, IsleError};
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -71,12 +74,8 @@ impl Default for SqlConfig {
 }
 
 /// Register `std.sql` with default [`SqlConfig`].
-pub fn register(
-    lua: &Lua,
-    conn: Arc<std::sync::Mutex<Connection>>,
-    interrupt: Arc<InterruptHandle>,
-) -> LuaResult<()> {
-    register_with(lua, conn, interrupt, SqlConfig::default())
+pub fn register(lua: &Lua, isle: AsyncIsle) -> LuaResult<()> {
+    register_with(lua, isle, SqlConfig::default())
 }
 
 /// Register `std.sql` with caller-provided [`SqlConfig`].
@@ -85,12 +84,7 @@ pub fn register(
 /// [`crate::kv::register_with`]) shares the same `SqlConfig` slot, so
 /// calling either `register_with` after the other replaces the previous
 /// config — pass identical configs from the host or only set it once.
-pub fn register_with(
-    lua: &Lua,
-    conn: Arc<std::sync::Mutex<Connection>>,
-    interrupt: Arc<InterruptHandle>,
-    cfg: SqlConfig,
-) -> LuaResult<()> {
+pub fn register_with(lua: &Lua, isle: AsyncIsle, cfg: SqlConfig) -> LuaResult<()> {
     lua.set_app_data::<SqlConfig>(cfg);
 
     let sql_tbl = lua.create_table()?;
@@ -106,25 +100,22 @@ pub fn register_with(
 
     // ── std.sql.query ─────────────────────────────────────────────────────
     {
-        let conn = Arc::clone(&conn);
-        let interrupt = Arc::clone(&interrupt);
+        let isle = isle.clone();
         sql_tbl.set(
             "query",
             lua.create_async_function(move |lua, (sql, params): (String, Option<LuaTable>)| {
-                let conn = Arc::clone(&conn);
-                let interrupt = Arc::clone(&interrupt);
+                let isle = isle.clone();
                 let params_result = params
                     .map(|t| lua_params_to_values(&t))
                     .transpose()
                     .map_err(LuaError::external);
                 async move {
                     let params_vec = params_result?.unwrap_or_default();
-                    let fut = tokio::task::spawn_blocking(move || {
-                        let guard = lock_conn(&conn);
-                        run_query(&guard, &sql, &params_vec)
-                    });
                     let timeout = sql_query_timeout(&lua);
-                    let rows = race_timeout(fut, timeout, &interrupt, "sql.query").await?;
+                    let rows = run_job(&isle, timeout, "sql.query", move |conn| {
+                        Ok(run_query(conn, &sql, &params_vec))
+                    })
+                    .await?;
                     rows_to_lua(&lua, rows)
                 }
             })?,
@@ -133,26 +124,22 @@ pub fn register_with(
 
     // ── std.sql.exec ──────────────────────────────────────────────────────
     {
-        let conn = Arc::clone(&conn);
-        let interrupt = Arc::clone(&interrupt);
+        let isle = isle.clone();
         sql_tbl.set(
             "exec",
             lua.create_async_function(move |lua, (sql, params): (String, Option<LuaTable>)| {
-                let conn = Arc::clone(&conn);
-                let interrupt = Arc::clone(&interrupt);
+                let isle = isle.clone();
                 let params_result = params
                     .map(|t| lua_params_to_values(&t))
                     .transpose()
                     .map_err(LuaError::external);
                 async move {
                     let params_vec = params_result?.unwrap_or_default();
-                    let fut = tokio::task::spawn_blocking(move || {
-                        let guard = lock_conn(&conn);
-                        run_exec(&guard, &sql, &params_vec)
-                    });
                     let timeout = sql_query_timeout(&lua);
-                    let (affected, last_id) =
-                        race_timeout(fut, timeout, &interrupt, "sql.exec").await?;
+                    let (affected, last_id) = run_job(&isle, timeout, "sql.exec", move |conn| {
+                        Ok(run_exec(conn, &sql, &params_vec))
+                    })
+                    .await?;
 
                     let result_tbl = lua.create_table()?;
                     result_tbl.set("affected", affected as i64)?;
@@ -178,27 +165,19 @@ pub(crate) fn sql_query_timeout(lua: &Lua) -> Option<Duration> {
 // Helpers shared with `std.kv` (re-exported under `pub(crate)`)
 // ---------------------------------------------------------------------------
 
-/// Lock the shared Connection mutex without panicking.
-///
-/// On `PoisonError` we log and recover via `into_inner()`. Poison here means a
-/// previous blocking thread panicked while holding the guard; for a local
-/// agent-runtime SQLite (single-process, embedded) the safest path is to log
-/// and keep serving rather than tear the host down.
-pub(crate) fn lock_conn(
-    conn: &std::sync::Mutex<Connection>,
-) -> std::sync::MutexGuard<'_, Connection> {
-    conn.lock().unwrap_or_else(|poisoned| {
-        warn!("sql conn mutex was poisoned; recovering via into_inner");
-        poisoned.into_inner()
-    })
-}
-
-/// Race an `spawn_blocking` SQL operation against (a) the enclosing task's
+/// Submit one job to the isle and race it against (a) the enclosing task's
 /// cancel token and (b) the configured query timeout.
 ///
-/// When either fires first we call `sqlite3_interrupt` via the stored handle
-/// so the blocking thread returns quickly, releases the Mutex guard, and
-/// frees the connection for subsequent calls.
+/// The job is submitted with `spawn_call`, whose `AsyncTask` cancels on
+/// drop.  Both losing branches therefore drop the task, which drains it from
+/// the queue if it has not started and interrupts the running statement if it
+/// has — the isle owns the `InterruptHandle`, so this crate no longer needs
+/// one.
+///
+/// The job returns `Result<Result<T, String>, rusqlite::Error>`: the inner
+/// `String` carries the bridge's own diagnostics (unsupported column type,
+/// non-UTF-8 TEXT, …), while the outer `rusqlite::Error` slot is left for the
+/// isle's error normalization.
 ///
 /// # Threading model
 ///
@@ -207,22 +186,25 @@ pub(crate) fn lock_conn(
 /// single-threaded by design.  Callers must `.await` this future on the
 /// same `LocalSet` that owns the VM; wrapping it in `tokio::spawn` will
 /// fail to compile.
-pub(crate) async fn race_timeout<T, F>(
-    fut: F,
+pub(crate) async fn run_job<T, F>(
+    isle: &AsyncIsle,
     timeout: Option<Duration>,
-    interrupt: &InterruptHandle,
     op: &'static str,
+    job: F,
 ) -> LuaResult<T>
 where
-    F: std::future::Future<Output = Result<Result<T, String>, tokio::task::JoinError>>,
+    T: Send + 'static,
+    F: FnOnce(&mut Connection) -> Result<Result<T, String>, rusqlite::Error> + Send + 'static,
 {
+    let task = isle.spawn_call(job);
+
     let wait = async {
         match timeout {
-            Some(d) => match tokio::time::timeout(d, fut).await {
-                Ok(j) => Ok(j),
+            Some(d) => match tokio::time::timeout(d, task).await {
+                Ok(r) => Ok(r),
                 Err(_) => Err(d),
             },
-            None => Ok(fut.await),
+            None => Ok(task.await),
         }
     };
 
@@ -230,7 +212,6 @@ where
         Some(t) => tokio::select! {
             biased;
             _ = t.cancelled() => {
-                interrupt.interrupt();
                 warn!(op, "cancelled by enclosing task");
                 return Err(LuaError::external(format!(
                     "task cancelled during {op}"
@@ -241,10 +222,9 @@ where
         None => wait.await,
     };
 
-    let joined = match wait_result {
-        Ok(j) => j,
+    let job_result = match wait_result {
+        Ok(r) => r,
         Err(d) => {
-            interrupt.interrupt();
             warn!(op, timeout_ms = d.as_millis() as u64, "operation timeout");
             return Err(LuaError::external(format!(
                 "{op} timeout ({}ms)",
@@ -253,15 +233,21 @@ where
         }
     };
 
-    joined
-        .map_err(|e| {
-            warn!(op, error = %e, "spawn_blocking join error");
-            LuaError::external(format!("spawn_blocking: {e}"))
-        })?
-        .map_err(|e| {
+    match job_result {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(e)) => {
             warn!(op, error = %e, "execution error");
-            LuaError::external(e)
-        })
+            Err(LuaError::external(e))
+        }
+        Err(IsleError::Cancelled) => {
+            warn!(op, "cancelled by the isle");
+            Err(LuaError::external(format!("task cancelled during {op}")))
+        }
+        Err(e) => {
+            warn!(op, error = %e, "isle error");
+            Err(LuaError::external(format!("{op}: {e}")))
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
