@@ -16,9 +16,9 @@ Current track: `rusqlite-isle 0.5` / `rusqlite 0.37` / `libsqlite3-sys 0.35`.
 - **Breaking**: `mlua` bumped from `0.11` to `0.12`; depends on
   `mlua-batteries 0.6`.  `mlua` types cross this crate's API, so consumers
   must move to `mlua 0.12` together.  No source changes were needed.
-- The version line no longer mirrors `rusqlite-isle`'s minor: 0.6.x still
-  sits on the `rusqlite-isle 0.5` cluster.  The mapping is kept in
-  `Cargo.toml` next to `version`.
+- Same SQLite cluster as 0.5.x (`rusqlite-isle 0.5` / `rusqlite 0.37`); the
+  line-to-cluster table lives in `Cargo.toml` next to `version` and in the
+  README.
 - MSRV raised from 1.77 to 1.88 (required by `mlua 0.12`).
 
 ## [0.5.0] - 2026-09-04
@@ -63,12 +63,10 @@ mlua_batteries_sqlite_isle::kv::register(&lua, isle).await?;
   rejects a manifest naming two rusqlite clusters as optional dependencies
   even when only one is activated — the check runs during dependency
   resolution, not after feature activation. Serving several clusters
-  therefore requires separate published version lines, whose minors mirror
-  `rusqlite-isle`'s: `0.5` = rusqlite 0.37. Lower lines (`0.3` / `0.2` for
-  the 0.32 / 0.31 clusters) can be opened if a consumer needs them; none is
-  published yet.
-- The version starts at 0.5.0 rather than 0.1.0 for that reason: the minor is
-  the track, so it has to line up with `rusqlite-isle`'s from the first
-  release.
+  therefore requires separate published version lines: `0.5` = rusqlite
+  0.37. Lower lines (`0.3` / `0.2` for the 0.32 / 0.31 clusters) can be
+  opened if a consumer needs them; none is published yet.
+- The version starts at 0.5.0 rather than 0.1.0 so the first line matches
+  the `rusqlite-isle 0.5` cluster it was built against.
 - `mlua-batteries-sqlite` 0.6.0 sits on the same rusqlite 0.37 cluster, so a
   host may link both crates.

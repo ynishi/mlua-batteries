@@ -59,11 +59,12 @@ Statements run on the isle's connection thread, so no blocking call and no lock 
 
 ## Choosing a version
 
-`libsqlite3-sys` declares `links = "sqlite3"`, so a build graph can hold exactly one of its major versions — and cargo enforces that while *resolving* dependencies, which means no crate can offer several clusters behind mutually exclusive features. Each release line therefore tracks one cluster, mirroring `rusqlite-isle`'s numbering:
+`libsqlite3-sys` declares `links = "sqlite3"`, so a build graph can hold exactly one of its major versions — and cargo enforces that while *resolving* dependencies, which means no crate can offer several clusters behind mutually exclusive features. Each release line therefore tracks one cluster:
 
-| `mlua-batteries-sqlite-isle` | `rusqlite-isle` | `rusqlite` | `libsqlite3-sys` |
-|---|---|---|---|
-| `0.5` | 0.5 | 0.37 | 0.35 |
+| `mlua-batteries-sqlite-isle` | `mlua` | `rusqlite-isle` | `rusqlite` | `libsqlite3-sys` |
+|---|---|---|---|---|
+| `0.6` | 0.12 | 0.5 | 0.37 | 0.35 |
+| `0.5` | 0.11 | 0.5 | 0.37 | 0.35 |
 
 Pick the line whose cluster your other rusqlite-dependent crates already sit on. Name the host's types through `mlua_batteries_sqlite_isle::rusqlite` / `::rusqlite_isle` rather than declaring a second dependency that could drift onto another cluster.
 

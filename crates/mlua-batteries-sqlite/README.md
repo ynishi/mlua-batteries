@@ -56,9 +56,10 @@ Statements run inside `tokio::task::spawn_blocking`, with the mutex taken inside
 
 `libsqlite3-sys` declares `links = "sqlite3"`, so a build graph can hold exactly one of its major versions — and cargo enforces that while *resolving* dependencies, which means no crate can offer several clusters behind mutually exclusive features. This crate sits on one cluster:
 
-| `mlua-batteries-sqlite` | `rusqlite` | `libsqlite3-sys` |
-|---|---|---|
-| `0.6` | 0.37 | 0.35 |
+| `mlua-batteries-sqlite` | `mlua` | `rusqlite` | `libsqlite3-sys` |
+|---|---|---|---|
+| `0.7` | 0.12 | 0.37 | 0.35 |
+| `0.6` | 0.11 | 0.37 | 0.35 |
 
 Name the host's types through `mlua_batteries_sqlite::rusqlite` rather than declaring a second dependency that could drift onto another cluster.
 

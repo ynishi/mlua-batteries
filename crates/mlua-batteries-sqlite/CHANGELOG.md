@@ -42,9 +42,8 @@ Current track: `rusqlite 0.37` / `libsqlite3-sys 0.35`.
     `BEGIN IMMEDIATE` wrapper went with the isle).
 - The `rusqlite_isle` re-export is gone. `rusqlite` is still re-exported so
   hosts can name the bridge's exact version without a second dependency.
-- The version no longer mirrors `rusqlite-isle`'s minor. This crate sits on
-  one rusqlite cluster, decided by its single `rusqlite` dependency line;
-  see the README table.
+- This crate sits on one rusqlite cluster, decided by its single `rusqlite`
+  dependency line; see the README table.
 
 ### Removed
 
@@ -88,9 +87,8 @@ mlua_batteries_sqlite::kv::register(&lua, isle).await?;
   rejects a manifest naming two rusqlite clusters as optional dependencies
   even when only one is activated — the check runs during dependency
   resolution, not after feature activation. Serving several clusters
-  therefore requires separate published version lines, whose minors mirror
-  `rusqlite-isle`'s: `0.5` = rusqlite 0.37, and lower lines are available for
-  the 0.32 / 0.31 clusters when a consumer needs them.
-- The version starts at 0.5.0 rather than 0.1.0 for that reason: the minor is
-  the track, so it has to line up with `rusqlite-isle`'s from the first
-  release.
+  therefore requires separate published version lines: `0.5` = rusqlite
+  0.37, and lower lines are available for the 0.32 / 0.31 clusters when a
+  consumer needs them.
+- The version starts at 0.5.0 rather than 0.1.0 so the first line matches
+  the `rusqlite-isle 0.5` cluster it was built against.

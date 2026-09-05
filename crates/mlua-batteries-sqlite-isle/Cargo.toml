@@ -1,14 +1,9 @@
 [package]
 name = "mlua-batteries-sqlite-isle"
-# The minor mirrors `rusqlite-isle`'s numbering so the two are readable side
-# by side. Only this line is published:
+# Each published line sits on one SQLite cluster. Only this line is published:
 #
 #   0.6.x  ->  rusqlite-isle 0.5  ->  rusqlite 0.37  ->  libsqlite3-sys 0.35  (mlua 0.12)
 #   0.5.x  ->  rusqlite-isle 0.5  ->  rusqlite 0.37  ->  libsqlite3-sys 0.35  (mlua 0.11)
-#
-# 0.6 broke the mirror: the mlua 0.11 -> 0.12 move is a breaking change on
-# this crate's own API (mlua types cross it), so the line had to advance even
-# though the SQLite cluster did not.
 #
 # Lower lines (0.3.x -> rusqlite 0.32, 0.2.x -> rusqlite 0.31) can be opened
 # if a consumer needs that cluster.
