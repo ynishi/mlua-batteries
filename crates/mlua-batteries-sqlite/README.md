@@ -48,6 +48,8 @@ The host owns the `rusqlite::Connection` (file path, `busy_timeout` and `journal
 
 `std.sql` and `std.kv` are typically given **separate** connections: keeping KV scratch state out of the user database keeps their backup / WAL / page-cache lifecycles from colliding.
 
+`kv::register` creates the `__kv` table on the supplied connection. Hosts that prefer to own schema setup can call `kv::init_schema(&conn)` right after opening the connection — the DDL is `CREATE TABLE IF NOT EXISTS`, so running it twice is harmless.
+
 Statements run inside `tokio::task::spawn_blocking`, with the mutex taken inside the blocking closure so no lock guard is held across an `.await`. Every query races the enclosing `task.scope` / `task.with_timeout` cancel token and the `SqlConfig` query timeout (5s by default); when either fires the bridge calls `sqlite3_interrupt` through the stored handle so the blocking thread returns and releases the connection.
 
 ## Choosing a version

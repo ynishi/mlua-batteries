@@ -26,7 +26,8 @@ Current track: `rusqlite 0.37` / `libsqlite3-sys 0.35`.
     Same for `register_with`.
   - `kv::register` / `kv::register_with` are **synchronous** again; the
     `__kv` table is created on the supplied connection at registration.
-    `kv::init_schema` is no longer public.
+    `kv::init_schema` stays public and now takes `&Connection`, for hosts
+    that prefer to own schema setup right after opening the connection.
   - `std.kv` writes run as plain statements again (the 0.5.0
     `BEGIN IMMEDIATE` wrapper went with the isle).
 - The `rusqlite_isle` re-export is gone. `rusqlite` is still re-exported so

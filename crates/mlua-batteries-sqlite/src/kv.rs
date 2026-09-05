@@ -58,11 +58,23 @@ fn validate_ns(ns: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn init_schema(conn: &Connection) -> Result<(), String> {
+/// Create the `__kv` table if it is not there yet.
+///
+/// [`register`] / [`register_with`] run this on the supplied connection
+/// before exposing `std.kv`, so hosts do not have to.  It is public for
+/// hosts that prefer to own schema setup themselves — right after opening
+/// the connection, before it is wrapped in `Arc<Mutex<_>>`:
+///
+/// ```rust,ignore
+/// let conn = Connection::open(kv_path)?;
+/// mlua_batteries_sqlite::kv::init_schema(&conn)?;
+/// ```
+///
+/// The DDL is `CREATE TABLE IF NOT EXISTS`, so running it twice is harmless.
+pub fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS __kv (\n                ns    TEXT NOT NULL,\n                key   TEXT NOT NULL,\n                value TEXT NOT NULL,\n                PRIMARY KEY (ns, key)\n            ) WITHOUT ROWID;",
     )
-    .map_err(|e| format!("kv schema init: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -95,7 +107,7 @@ pub fn register_with(
     // One-time schema init on the supplied connection.
     {
         let guard = lock_conn(&conn);
-        init_schema(&guard).map_err(LuaError::external)?;
+        init_schema(&guard).map_err(|e| LuaError::external(format!("kv schema init: {e}")))?;
     }
 
     let kv_tbl = lua.create_table()?;
