@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-04
+
+### Added
+
+- `async_overrides` — an opt-in layer that replaces the blocking entries of
+  an already-registered namespace with async ones, so a script running under
+  `std.task` no longer parks the VM thread (and every sibling task with it)
+  on a sleep, a subprocess, an HTTP call or a file read.
+
+  ```rust,ignore
+  mlua_batteries::register_all(&lua, "std")?;
+  mlua_batteries::task::register(&lua)?;
+  mlua_batteries::async_overrides::register_by_name(&lua, "std")?;
+  ```
+
+  Overridden: `std.time.sleep`, `std.proc.pipeline`, `std.http.get` /
+  `.post` / `.request`, and all 14 `std.fs.*` functions (13 on non-unix;
+  `symlink` is unix-only). Lua-side names, arguments, return values and
+  error messages are unchanged — argument parsing, policy checks and
+  result-table construction still run on the VM thread, and only the bulk
+  blocking work moves (`tokio::time::sleep` for `time.sleep`,
+  `tokio::task::spawn_blocking` for the rest; policy resolution, including
+  the `max_read_bytes` size stat, stays on the VM thread). Both paths
+  share the same helpers, so the sync and async behaviour cannot drift
+  apart. Only modules whose feature is enabled and whose table is present
+  in the namespace are touched.
+
+  It lives behind the existing `task` feature and carries the same runtime
+  contract: a tokio current-thread runtime driving a `LocalSet`. The
+  overridden functions are async, so they run under `call_async` /
+  `eval_async`; a function passed to `std.time.measure` (which calls it
+  synchronously) must not use an overridden entry.
+
+  `std.time.sleep` races the enclosing scope's cancel token exactly like
+  `std.task.sleep` and raises `"task cancelled"`. The `spawn_blocking`
+  overrides do not interrupt work already on the blocking pool: **cancelling
+  the enclosing task cannot abort a running `proc.pipeline`** — it runs to
+  completion or to its own `timeout_secs`, and the caller simply stops
+  waiting. Aborting a live pipeline needs a native `tokio::process`
+  implementation, which is left for a later change. The same applies to an
+  in-flight HTTP request or file read.
+
 ## [0.5.0] - 2026-09-04
 
 ### Removed

@@ -142,6 +142,20 @@ tokio = { version = "1", features = ["rt", "macros"] }
 
 See the module-level rustdoc on `src/task/mod.rs` for the full API.
 
+### Async overrides for the blocking modules
+
+The core modules stay synchronous, which means a script that calls `std.time.sleep(5)` or `std.http.get(url)` inside a task parks the single VM thread and every sibling task with it. `async_overrides` is the opt-in fix — call it after `register_all` + `task::register` and it replaces those entries in place:
+
+```rust,ignore
+mlua_batteries::register_all(&lua, "std")?;
+mlua_batteries::task::register(&lua)?;
+mlua_batteries::async_overrides::register_by_name(&lua, "std")?;
+```
+
+With it, `std.time.sleep`, `std.proc.pipeline`, `std.http.*` and `std.fs.*` no longer block the VM thread. Lua-side names, arguments, return values and error messages are unchanged — argument parsing, policy checks and result-table construction still happen on the VM thread, and only the bulk blocking work moves (`tokio::time::sleep` for `time.sleep`, `tokio::task::spawn_blocking` for the rest; policy resolution, including the `max_read_bytes` size stat, stays on the VM thread). It ships behind the same `task` feature and wants the same runtime: a current-thread runtime driving a `LocalSet`. Because the overrides are async functions, scripts using them run under `call_async` / `eval_async`, and a function passed to `std.time.measure` (which calls it synchronously) must not use an overridden entry.
+
+`std.time.sleep` becomes cancel-aware in the same way `std.task.sleep` is. The `spawn_blocking` overrides do not interrupt work already handed to the blocking pool — cancelling the enclosing task cannot abort a running `proc.pipeline`, HTTP request or file read; each runs to completion (or, for a pipeline, to its own `timeout_secs`) while the VM thread stays free for siblings.
+
 ## SQLite: `std.sql` / `std.kv`
 
 The SQLite bridges live in companion crates. They were part of this crate up to 0.4.0 and moved out in 0.5.0. [`mlua-batteries-sqlite`](crates/mlua-batteries-sqlite) is the default: a host-owned `rusqlite::Connection` behind `Arc<Mutex<_>>`, with statements run in `tokio::task::spawn_blocking`. [`mlua-batteries-sqlite-isle`](crates/mlua-batteries-sqlite-isle) is the variant for hosts that already run SQLite on a [`rusqlite-isle`](https://crates.io/crates/rusqlite-isle) connection thread. The Lua-side API is the same; only the host wiring differs.

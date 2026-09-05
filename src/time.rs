@@ -13,6 +13,28 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::util::with_config;
 
+/// Validate a `time.sleep` argument and turn it into a [`Duration`].
+///
+/// Rejects non-finite and negative values, then applies
+/// [`Config::max_sleep_secs`](crate::config::Config).  Shared by the
+/// blocking `std.time.sleep` and by the async override in
+/// [`crate::async_overrides`], so both enforce the same bounds and
+/// report the same messages.
+pub(crate) fn validate_sleep(lua: &Lua, seconds: f64) -> LuaResult<Duration> {
+    if !seconds.is_finite() || seconds < 0.0 {
+        return Err(LuaError::external(format!(
+            "sleep duration must be a finite non-negative number, got {seconds}"
+        )));
+    }
+    let max_secs = with_config(lua, |c| c.max_sleep_secs)?;
+    if seconds > max_secs {
+        return Err(LuaError::external(format!(
+            "sleep duration must not exceed {max_secs} seconds"
+        )));
+    }
+    Ok(Duration::from_secs_f64(seconds))
+}
+
 pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
     let t = lua.create_table()?;
 
@@ -41,18 +63,8 @@ pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
     t.set(
         "sleep",
         lua.create_function(|lua, seconds: f64| {
-            if !seconds.is_finite() || seconds < 0.0 {
-                return Err(LuaError::external(format!(
-                    "sleep duration must be a finite non-negative number, got {seconds}"
-                )));
-            }
-            let max_secs = with_config(lua, |c| c.max_sleep_secs)?;
-            if seconds > max_secs {
-                return Err(LuaError::external(format!(
-                    "sleep duration must not exceed {max_secs} seconds"
-                )));
-            }
-            std::thread::sleep(Duration::from_secs_f64(seconds));
+            let dur = validate_sleep(lua, seconds)?;
+            std::thread::sleep(dur);
             Ok(())
         })?,
     )?;

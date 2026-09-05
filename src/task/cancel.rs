@@ -107,7 +107,7 @@ pub fn effective_token() -> Option<CancelToken> {
 /// Sleep for `dur`, but short-circuit with `Err("task cancelled")` if the
 /// effective cancel token (see [`effective_token`]) fires during the wait.
 /// Falls back to a plain sleep when no token is installed.
-pub(super) async fn race_sleep(dur: Duration) -> LuaResult<()> {
+pub(crate) async fn race_sleep(dur: Duration) -> LuaResult<()> {
     match effective_token() {
         None => {
             tokio::time::sleep(dur).await;

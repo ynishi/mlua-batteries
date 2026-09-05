@@ -13,7 +13,7 @@ homepage = "https://github.com/ynishi/mlua-batteries"
 
 [package]
 name = "mlua-batteries"
-version = "0.5.0"
+version = "0.5.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

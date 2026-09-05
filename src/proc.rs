@@ -331,7 +331,14 @@ pub fn run_pipeline(spec: &PipelineSpec) -> Result<PipelineResult, String> {
 // ─── Lua binding ─────────────────────────────────────────────────────────
 
 /// Parse the Lua-side `(stages, opts)` arguments into a [`PipelineSpec`].
-fn parse_pipeline_spec(stages: LuaTable, opts: Option<LuaTable>) -> Result<PipelineSpec, String> {
+///
+/// Reads Lua tables, so it must run on the VM thread — the async override
+/// in [`crate::async_overrides`] calls it there and moves only the
+/// resulting spec onto the blocking pool.
+pub(crate) fn parse_pipeline_spec(
+    stages: LuaTable,
+    opts: Option<LuaTable>,
+) -> Result<PipelineSpec, String> {
     let mut out_stages = Vec::new();
     for (idx, stage) in stages.sequence_values::<LuaTable>().enumerate() {
         let i = idx + 1;
@@ -393,7 +400,10 @@ fn parse_pipeline_spec(stages: LuaTable, opts: Option<LuaTable>) -> Result<Pipel
 }
 
 /// Convert a [`PipelineResult`] into the documented Lua result table.
-fn pipeline_result_to_lua(lua: &Lua, r: &PipelineResult) -> LuaResult<LuaTable> {
+///
+/// Builds Lua tables, so it must run on the VM thread — shared with the
+/// async override in [`crate::async_overrides`].
+pub(crate) fn pipeline_result_to_lua(lua: &Lua, r: &PipelineResult) -> LuaResult<LuaTable> {
     let out = lua.create_table()?;
     out.set("ok", r.ok)?;
     out.set("timed_out", r.timed_out)?;
