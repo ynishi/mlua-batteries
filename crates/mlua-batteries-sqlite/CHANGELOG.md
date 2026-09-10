@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-11
+
+Current track: `rusqlite 0.40` / `libsqlite3-sys 0.38`.
+
+New track only. The Rust API, the Lua API and the feature set are unchanged
+from 0.7.0; no source file moved.
+
+### Changed
+
+- `rusqlite` dependency from `0.37` to `0.40`, which brings
+  `libsqlite3-sys` from `0.35` to `0.38`. The two move together: `libsqlite3-sys`
+  declares `links = "sqlite3"`, so one build graph holds exactly one of its
+  major versions and the rusqlite line picks it. Hosts that link
+  `mlua-batteries-sqlite` alongside other rusqlite-dependent crates have to
+  move all of them onto the 0.40 cluster at once.
+- `mlua-batteries-sqlite` 0.8.0 and `mlua-batteries-sqlite-isle` 0.7.0 sit on
+  the same rusqlite 0.40 cluster, so a host may link both.
+- MSRV stays at 1.88. `rusqlite 0.40` pulls `hashlink 0.12` / `hashbrown 0.17`,
+  which declare 1.85 — below the workspace floor, so nothing moves.
+
+### Security
+
+- **The bundled SQLite is no longer one affected by the WAL-reset corruption
+  bug.** Two connections on one WAL-mode database — separate threads or
+  separate processes — writing or checkpointing at the same instant can leave
+  the file corrupt. Every SQLite from 3.7.0 through 3.51.2 has the bug; it is
+  fixed in 3.51.3. The 0.37 track bundles 3.50.2 and the 0.40 track bundles
+  3.53.2. Hosts staying on `0.7` should link a system SQLite of 3.51.3 or
+  newer with `default-features = false`.
+
 ## [0.7.0] - 2026-09-05
 
 Current track: `rusqlite 0.37` / `libsqlite3-sys 0.35`.

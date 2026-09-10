@@ -58,12 +58,13 @@ Statements run inside `tokio::task::spawn_blocking`, with the mutex taken inside
 
 | `mlua-batteries-sqlite` | `mlua` | `rusqlite` | `libsqlite3-sys` |
 |---|---|---|---|
+| `0.8` | 0.12 | 0.40 | 0.38 |
 | `0.7` | 0.12 | 0.37 | 0.35 |
 | `0.6` | 0.11 | 0.37 | 0.35 |
 
 Name the host's types through `mlua_batteries_sqlite::rusqlite` rather than declaring a second dependency that could drift onto another cluster.
 
-Hosts that already run SQLite on a [rusqlite-isle](https://crates.io/crates/rusqlite-isle) connection thread want [`mlua-batteries-sqlite-isle`](https://crates.io/crates/mlua-batteries-sqlite-isle) instead — the same Lua API on an `AsyncIsle`, on the same rusqlite 0.37 cluster.
+Hosts that already run SQLite on a [rusqlite-isle](https://crates.io/crates/rusqlite-isle) connection thread want [`mlua-batteries-sqlite-isle`](https://crates.io/crates/mlua-batteries-sqlite-isle) instead — the same Lua API on an `AsyncIsle`, on the same rusqlite 0.40 cluster.
 
 This is also why the bridges are not part of `mlua-batteries` itself: the SQLite dependency belongs on this small crate, leaving the facade free of a C library and its version line free for its own features.
 
