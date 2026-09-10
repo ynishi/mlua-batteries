@@ -45,7 +45,7 @@ Both are async-first and require a `tokio` current-thread runtime driving a `Loc
 
 This crate is for hosts that already run SQLite on a `rusqlite-isle` connection thread and want `std.sql` / `std.kv` on that same `AsyncIsle` rather than a second, separately-locked connection. The Lua-side API is identical; only the host wiring differs.
 
-Both sit on rusqlite 0.37, so a host may link both — the two bridges resolve to one `libsqlite3-sys` cluster.
+Both sit on rusqlite 0.40, so a host may link both — the two bridges resolve to one `libsqlite3-sys` cluster.
 
 ## Wiring
 
@@ -63,6 +63,7 @@ Statements run on the isle's connection thread, so no blocking call and no lock 
 
 | `mlua-batteries-sqlite-isle` | `mlua` | `rusqlite-isle` | `rusqlite` | `libsqlite3-sys` |
 |---|---|---|---|---|
+| `0.7` | 0.12 | 0.6 | 0.40 | 0.38 |
 | `0.6` | 0.12 | 0.5 | 0.37 | 0.35 |
 | `0.5` | 0.11 | 0.5 | 0.37 | 0.35 |
 

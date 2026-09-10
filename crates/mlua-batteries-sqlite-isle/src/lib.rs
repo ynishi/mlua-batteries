@@ -20,7 +20,7 @@
 //! is the default bridge: a host-owned `rusqlite::Connection` behind
 //! `Arc<Mutex<_>>`, with statements in `tokio::task::spawn_blocking`. This
 //! crate is the variant for hosts already running SQLite on a `rusqlite-isle`
-//! connection thread — same Lua API, same rusqlite 0.37 cluster.
+//! connection thread — same Lua API, same rusqlite 0.40 cluster.
 //!
 //! # Why this is a separate crate
 //!
@@ -36,6 +36,8 @@
 //!
 //! | `mlua-batteries-sqlite-isle` | `rusqlite-isle` | `rusqlite` | `libsqlite3-sys` |
 //! |---|---|---|---|
+//! | `0.7` | 0.6 | 0.40 | 0.38 |
+//! | `0.6` | 0.5 | 0.37 | 0.35 |
 //! | `0.5` | 0.5 | 0.37 | 0.35 |
 //!
 //! # Wiring

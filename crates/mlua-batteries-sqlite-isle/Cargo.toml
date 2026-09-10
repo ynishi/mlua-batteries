@@ -2,6 +2,7 @@
 name = "mlua-batteries-sqlite-isle"
 # Each published line sits on one SQLite cluster. Only this line is published:
 #
+#   0.7.x  ->  rusqlite-isle 0.6  ->  rusqlite 0.40  ->  libsqlite3-sys 0.38  (mlua 0.12)
 #   0.6.x  ->  rusqlite-isle 0.5  ->  rusqlite 0.37  ->  libsqlite3-sys 0.35  (mlua 0.12)
 #   0.5.x  ->  rusqlite-isle 0.5  ->  rusqlite 0.37  ->  libsqlite3-sys 0.35  (mlua 0.11)
 #
@@ -11,7 +12,7 @@ name = "mlua-batteries-sqlite-isle"
 # `libsqlite3-sys` declares `links = "sqlite3"`, so one build graph holds one
 # cluster and cargo enforces it at dependency-resolution time — which is why
 # the track is a version line rather than a feature.
-version = "0.6.0"
+version = "0.7.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -53,8 +54,8 @@ tracing = "0.1"
 # still needed because the isle does not re-export it and the converters name
 # `types::{Value, ValueRef}` directly. Both must resolve to the same cluster —
 # switching tracks is an edit of these two lines plus the version above.
-rusqlite-isle = { version = "0.5", default-features = false, features = ["tokio"] }
-rusqlite = "0.37"
+rusqlite-isle = { version = "0.6", default-features = false, features = ["tokio"] }
+rusqlite = "0.40"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
