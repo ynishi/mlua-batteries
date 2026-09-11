@@ -40,6 +40,26 @@
 //! // Lua: std.env.get("HOME")
 //! ```
 //!
+//! # `require` instead of a global (Teal / htl)
+//!
+//! [`register_all`] installs a global table, which is the convenient
+//! shape for plain Lua.  A Teal project (htl lints `global` away) reaches
+//! the same modules through `require`: [`preload_all`] registers every
+//! enabled module in `package.preload` under `<prefix>.<name>`, plus the
+//! namespace itself under `<prefix>`, and touches no global.  The
+//! declarations that let the Teal checker see them are in
+//! [`dts`](crate::dts) (feature `dts`), written to a project's `types/`
+//! with the same prefix.
+//!
+//! ```rust,no_run
+//! use mlua::prelude::*;
+//!
+//! let lua = Lua::new();
+//! mlua_batteries::preload_all(&lua, mlua_batteries::PRELOAD_PREFIX).unwrap();
+//! // Lua / Teal: local json = require("mlua_batteries.json")
+//! //             local std  = require("mlua_batteries")   -- every module in one table
+//! ```
+//!
 //! # Async
 //!
 //! The modules above are synchronous and need no runtime.  Two opt-in
@@ -176,6 +196,76 @@ pub fn register_all_with(lua: &Lua, namespace: &str, config: Config) -> LuaResul
 
     lua.globals().set(namespace, ns.clone())?;
     Ok(ns)
+}
+
+/// The `require` prefix this crate's shipped Teal declarations are named
+/// under (`require("mlua_batteries.json")`), and the one to pass
+/// [`preload_all`] unless the host composes its own namespace.
+///
+/// It is the crate's own name rather than `std` on purpose: `std` is the
+/// host's namespace to assemble (a host may keep `std.fs` for its own
+/// sandboxed module and take only `std.json` from here), so nothing this
+/// crate ships claims it.
+pub const PRELOAD_PREFIX: &str = "mlua_batteries";
+
+/// Register every enabled module in `package.preload` with default
+/// configuration.
+///
+/// Equivalent to `preload_all_with(lua, prefix, Config::default())`; the
+/// warning on [`register_all`] about the unrestricted default policy
+/// applies here too.
+pub fn preload_all(lua: &Lua, prefix: &str) -> LuaResult<()> {
+    preload_all_with(lua, prefix, Config::default())
+}
+
+/// Register every enabled module in `package.preload` with custom
+/// configuration.
+///
+/// After this call `require("<prefix>.json")` (and so on for each module
+/// in [`module_entries`]) returns the module table, and
+/// `require("<prefix>")` returns a namespace table holding all of them —
+/// the same table instances, since the namespace loader goes through
+/// `require` itself.  Modules are built lazily on first `require` and
+/// cached by `package.loaded` as usual.  No global is set, which is what a
+/// Teal / htl project wants (see the crate docs); the two entry points are
+/// independent, so a host may call [`register_all_with`] as well.
+///
+/// The [`Config`] goes into `lua.app_data` exactly as in
+/// [`register_all_with`], with the same replace-on-repeat semantics.
+///
+/// The prefix is the host's choice.  [`PRELOAD_PREFIX`] matches the
+/// module names the shipped Teal declarations use; a host that names its
+/// namespace differently writes the declarations under that prefix
+/// instead (`dts::write_to(dir, prefix)`), so the two stay aligned.
+pub fn preload_all_with(lua: &Lua, prefix: &str, config: Config) -> LuaResult<()> {
+    lua.set_app_data(config);
+
+    let preload: LuaTable = lua
+        .globals()
+        .get::<LuaTable>("package")?
+        .get::<LuaTable>("preload")?;
+
+    let mut names: Vec<&'static str> = Vec::new();
+    for (name, factory) in module_entries() {
+        names.push(name);
+        // A preload loader receives (modname, extra); neither is needed.
+        let loader = lua.create_function(move |lua, _: LuaMultiValue| factory(lua))?;
+        preload.set(format!("{prefix}.{name}"), loader)?;
+    }
+
+    let prefix_owned = prefix.to_string();
+    let namespace_loader = lua.create_function(move |lua, _: LuaMultiValue| {
+        let require: LuaFunction = lua.globals().get("require")?;
+        let ns = lua.create_table()?;
+        for name in &names {
+            let module: LuaTable = require.call(format!("{prefix_owned}.{name}"))?;
+            ns.set(*name, module)?;
+        }
+        Ok(ns)
+    })?;
+    preload.set(prefix, namespace_loader)?;
+
+    Ok(())
 }
 
 /// Returns a list of `(name, factory)` pairs for all enabled modules.
