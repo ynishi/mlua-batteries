@@ -48,8 +48,8 @@
 //! enabled module in `package.preload` under `<prefix>.<name>`, plus the
 //! namespace itself under `<prefix>`, and touches no global.  The
 //! declarations that let the Teal checker see them are in
-//! [`dts`](crate::dts) (feature `dts`), written to a project's `types/`
-//! with the same prefix.
+//! [`dts`](crate::dts), written to a project's `types/` with the same
+//! prefix.
 //!
 //! ```rust,no_run
 //! use mlua::prelude::*;
@@ -91,6 +91,7 @@
 //! ```
 
 pub mod config;
+pub mod dts;
 pub mod policy;
 
 #[cfg(feature = "task")]
@@ -222,7 +223,8 @@ pub fn preload_all(lua: &Lua, prefix: &str) -> LuaResult<()> {
 /// configuration.
 ///
 /// After this call `require("<prefix>.json")` (and so on for each module
-/// in [`module_entries`]) returns the module table, and
+/// in [`module_entries`], plus `task` when that feature is on) returns
+/// the module table, and
 /// `require("<prefix>")` returns a namespace table holding all of them —
 /// the same table instances, since the namespace loader goes through
 /// `require` itself.  Modules are built lazily on first `require` and
@@ -245,8 +247,16 @@ pub fn preload_all_with(lua: &Lua, prefix: &str, config: Config) -> LuaResult<()
         .get::<LuaTable>("package")?
         .get::<LuaTable>("preload")?;
 
+    // `task` is async-first and stays out of the synchronous namespace
+    // `register_all` builds, but a preload entry costs nothing until it is
+    // required, so a Teal host reaches it the same way as the others.
+    #[cfg(feature = "task")]
+    let task_entry = Some(("task", task::module as ModuleFactory));
+    #[cfg(not(feature = "task"))]
+    let task_entry: Option<(&'static str, ModuleFactory)> = None;
+
     let mut names: Vec<&'static str> = Vec::new();
-    for (name, factory) in module_entries() {
+    for (name, factory) in module_entries().into_iter().chain(task_entry) {
         names.push(name);
         // A preload loader receives (modname, extra); neither is needed.
         let loader = lua.create_function(move |lua, _: LuaMultiValue| factory(lua))?;

@@ -25,6 +25,14 @@ readme = "README.md"
 keywords = ["lua", "mlua", "batteries", "stdlib", "sandbox"]
 categories = ["development-tools", "api-bindings"]
 
+# Teal declarations for the Lua modules, one per module, named for
+# `require("mlua_batteries.<module>")`.  `mlua_batteries::dts::write_to`
+# writes the enabled ones (plus a generated init.d.tl) under a chosen
+# prefix; this list is the static hint for tooling that copies the
+# crate's own files instead.  Nothing here claims `std`.
+[package.metadata.htl]
+dts = ["types/mlua_batteries/*.d.tl"]
+
 [features]
 default = ["json", "env", "path", "time", "string", "validate"]
 json = ["dep:serde_json"]

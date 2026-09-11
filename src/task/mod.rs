@@ -217,13 +217,34 @@ pub fn register(lua: &Lua) -> LuaResult<()> {
 /// consult it without threading it through every closure capture.
 pub fn register_with(lua: &Lua, cfg: TaskConfig) -> LuaResult<()> {
     lua.set_app_data::<TaskConfig>(cfg);
+    let task = module(lua)?;
+    let std_ns: LuaTable = lua.globals().get("std")?;
+    std_ns.set("task", task)?;
+    Ok(())
+}
+
+/// Build the `task` module table without touching any global — the shape
+/// [`crate::preload_all`] wants, and the same one [`register_with`]
+/// installs as `std.task`.
+///
+/// The [`TaskConfig`] is left as it is when one is already in
+/// `lua.app_data` (set by [`register_with`], or by the host beforehand),
+/// and defaults otherwise.  The root scope is installed on the first call
+/// and reused afterwards, so building the table twice does not orphan the
+/// tasks attached to the first root.
+pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
+    if lua.app_data_ref::<TaskConfig>().is_none() {
+        lua.set_app_data::<TaskConfig>(TaskConfig::default());
+    }
 
     // Install the root scope as app_data.  The root scope lives for the VM
     // lifetime and catches top-level `task.spawn` calls that are not inside
     // any `task.scope` body.  Its Drop triggers a last-resort abort on
     // outstanding fire-and-forget tasks during VM teardown.
-    let root = Scope::new(Some("root".to_string()));
-    lua.set_app_data::<Rc<RefCell<Scope>>>(root);
+    if lua.app_data_ref::<Rc<RefCell<Scope>>>().is_none() {
+        let root = Scope::new(Some("root".to_string()));
+        lua.set_app_data::<Rc<RefCell<Scope>>>(root);
+    }
 
     let task = lua.create_table()?;
     task.set("spawn", lua.create_function(api::spawn)?)?;
@@ -237,10 +258,7 @@ pub fn register_with(lua: &Lua, cfg: TaskConfig) -> LuaResult<()> {
         "with_timeout",
         lua.create_async_function(api::with_timeout)?,
     )?;
-
-    let std_ns: LuaTable = lua.globals().get("std")?;
-    std_ns.set("task", task)?;
-    Ok(())
+    Ok(task)
 }
 
 /// Read the registered [`TaskConfig`] (set by [`register_with`]).  Falls
