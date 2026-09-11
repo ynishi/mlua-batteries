@@ -77,6 +77,12 @@ pub fn entries() -> Vec<Entry> {
     entry!("base64");
     entry!("time");
     entry!("hash");
+    entry!("fs");
+    entry!("http");
+    entry!("llm");
+    entry!("proc");
+    entry!("watch");
+    entry!("task");
 
     entries
 }
