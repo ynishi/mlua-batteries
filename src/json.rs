@@ -39,6 +39,25 @@
 //! The tag is consulted **only for empty tables**.  Tables with contents are
 //! classified by those contents exactly as before, so `__jsontype` can
 //! neither turn a map into an array nor an array into a map.
+//!
+//! # Explicit `null`: `json.null`
+//!
+//! `decode` lowers JSON `null` to Lua `nil`, which is what most scripts want
+//! but leaves no way to *emit* a null: a `nil` field simply does not exist
+//! in a Lua table, so it never reaches the encoder.  `json.null` is the
+//! sentinel the encoder already understands (`LightUserData(null)`, the
+//! same value mlua's serde bridge uses), exported so a script can ask for
+//! an explicit `null` in the output:
+//!
+//! ```lua
+//! json.encode({ name = json.null })     --> '{"name":null}'
+//! json.is_null(json.null)               --> true
+//! json.is_null(nil)                     --> false
+//! ```
+//!
+//! `decode` keeps lowering `null` to `nil`; the round-trip-preserving
+//! variant lives in [`json_to_lua_preserving_null`] for bridges that need
+//! it.
 
 use mlua::prelude::*;
 use serde_json::Value as JsonValue;
@@ -163,6 +182,18 @@ pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
         })?,
     )?;
 
+    // json.null: the encoder's null sentinel (see the module docs).  A
+    // LightUserData compares by pointer, so `v == json.null` works from Lua
+    // too; `is_null` is the spelled-out form for Teal, where the sentinel
+    // is declared as an opaque `userdata`.
+    t.set("null", LuaValue::NULL)?;
+    t.set(
+        "is_null",
+        lua.create_function(|_, v: LuaValue| {
+            Ok(matches!(v, LuaValue::LightUserData(u) if u.0.is_null()))
+        })?,
+    )?;
+
     t.set(
         "read_file",
         lua.create_function(|lua, path: String| {
@@ -195,7 +226,18 @@ pub fn module(lua: &Lua) -> LuaResult<LuaTable> {
 
 // ─── Conversion: JSON → Lua ────────────────────────────
 
-pub(crate) fn json_to_lua(lua: &Lua, value: &JsonValue, max_depth: usize) -> LuaResult<LuaValue> {
+/// Convert a [`JsonValue`] to a Lua value the way `json.decode` does:
+/// `null` becomes `nil`, empty arrays are tagged with [`array_metatable`],
+/// integers stay integers.
+///
+/// `max_depth` bounds the nesting; `json.decode` passes
+/// `Config::max_json_depth` and an embedder without a
+/// [`Config`](crate::config::Config) can pass [`DEFAULT_MAX_DEPTH`] for
+/// the same limit.  Public so a host bridge (a `FromLua` / `IntoLua`
+/// newtype around `serde_json::Value`, say) converts exactly like the Lua
+/// module and shares its metatable; for the `null`-preserving variant see
+/// [`json_to_lua_preserving_null`].
+pub fn json_to_lua(lua: &Lua, value: &JsonValue, max_depth: usize) -> LuaResult<LuaValue> {
     json_to_lua_inner(lua, value, 0, max_depth)
 }
 
@@ -250,7 +292,16 @@ fn json_to_lua_inner(
 
 // ─── Conversion: Lua → JSON ────────────────────────────
 
-pub(crate) fn lua_to_json(value: &LuaValue, max_depth: usize) -> LuaResult<JsonValue> {
+/// Convert a Lua value to a [`JsonValue`] the way `json.encode` does: both
+/// `nil` and the `json.null` sentinel become `null`, tables are classified
+/// as array or object by their contents (a sequence `1..n` is an array,
+/// anything else an object), and an empty table follows
+/// [`wants_empty_array`].
+///
+/// `max_depth` bounds the nesting exactly as in [`json_to_lua`].  Public
+/// for the same reason; the `null`-preserving variant is
+/// [`lua_to_json_preserving_null`].
+pub fn lua_to_json(value: &LuaValue, max_depth: usize) -> LuaResult<JsonValue> {
     lua_to_json_inner(value, 0, max_depth)
 }
 
@@ -331,12 +382,18 @@ fn lua_table_to_json(table: &LuaTable, depth: usize, max_depth: usize) -> LuaRes
 // metatable instance.
 // ---------------------------------------------------------------------------
 
+/// Nesting limit `json.decode` / `json.encode` apply when no
+/// [`Config`](crate::config::Config) overrides `max_json_depth`, and the
+/// value to hand [`json_to_lua`] / [`lua_to_json`] from a host that has
+/// no `Config` at all.
+pub const DEFAULT_MAX_DEPTH: usize = 128;
+
 /// Nesting limit for the NULL-preserving converters.
 ///
 /// Fixed rather than read from [`crate::config::Config`]: these run inside
 /// bridges that may be registered without this crate's `Config` in
 /// `lua.app_data`.
-pub const PRESERVING_NULL_MAX_DEPTH: usize = 128;
+pub const PRESERVING_NULL_MAX_DEPTH: usize = DEFAULT_MAX_DEPTH;
 
 /// Convert a [`JsonValue`] to a Lua value, keeping `null` as the
 /// `LightUserData(null_ptr)` sentinel instead of lowering it to `nil`.
@@ -506,6 +563,63 @@ mod tests {
         "#,
         );
         assert_eq!(s, "test,3");
+    }
+
+    #[test]
+    fn encode_pretty_orders_keys() {
+        // serde_json's Map is a BTreeMap unless some crate in the build
+        // enables `preserve_order`; this pins the sorted output the crate
+        // is tested with.  `std.pretty.dump` sorts on its own and does not
+        // depend on this.
+        let s: String = eval(r#"return std.json.encode_pretty({ b = 1, a = { d = 2, c = 3 } })"#);
+        assert_eq!(
+            s,
+            "{\n  \"a\": {\n    \"c\": 3,\n    \"d\": 2\n  },\n  \"b\": 1\n}"
+        );
+    }
+
+    #[test]
+    fn null_sentinel_encodes_as_null() {
+        let s: String = eval(r#"return std.json.encode({ name = std.json.null })"#);
+        assert_eq!(s, r#"{"name":null}"#);
+        let s: String = eval(r#"return std.json.encode({ 1, std.json.null, 3 })"#);
+        assert_eq!(s, "[1,null,3]");
+    }
+
+    #[test]
+    fn is_null_distinguishes_sentinel_from_nil() {
+        let s: String = eval(
+            r#"
+            local j = std.json
+            return table.concat({
+                tostring(j.is_null(j.null)),
+                tostring(j.is_null(nil)),
+                tostring(j.is_null(false)),
+                tostring(j.is_null({})),
+                tostring(j.null == j.null),
+            }, ",")
+        "#,
+        );
+        assert_eq!(s, "true,false,false,false,true");
+    }
+
+    #[test]
+    fn decode_still_lowers_null_to_nil() {
+        let b: bool = eval(r#"return std.json.decode('{"a":null}').a == nil"#);
+        assert!(b);
+    }
+
+    #[test]
+    fn pub_converters_match_module_behaviour() {
+        let lua = Lua::new();
+        let v: JsonValue = serde_json::json!({"a": [], "b": null, "c": [1, 2.5]});
+        let lv = json_to_lua(&lua, &v, DEFAULT_MAX_DEPTH).unwrap();
+        // null lowered to nil: `b` is absent
+        let t = lv.as_table().unwrap();
+        assert!(t.get::<LuaValue>("b").unwrap().is_nil());
+        // empty array tagged, so the round trip keeps `[]`
+        let back = lua_to_json(&lv, DEFAULT_MAX_DEPTH).unwrap();
+        assert_eq!(back, serde_json::json!({"a": [], "c": [1, 2.5]}));
     }
 
     #[test]

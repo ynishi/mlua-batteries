@@ -17,6 +17,8 @@ Core modules (`json`, `env`, `path`, `time`, `fs`, `http`, `hash`, `llm`, `strin
 | `string` | `string` | String utilities beyond Lua's built-ins |
 | `regex` | `regex` | Regex match / replace (`regex` crate) |
 | `validate` | `validate` | Lightweight value validation helpers |
+| `pretty` | `pretty` | Deterministic dump of any Lua value (`pretty.dump`) |
+| `argparse` | `argparse` | Spec-driven command-line parsing (`parse` / `usage`) |
 | `log` | `log` | Bridge to the host's `log` facade |
 | `uuid` | `uuid` | UUID v4 / v7 generation |
 | `base64` | `base64` | Base64 encode / decode |
@@ -31,14 +33,14 @@ Core modules (`json`, `env`, `path`, `time`, `fs`, `http`, `hash`, `llm`, `strin
 
 `std.sql` / `std.kv` moved to the [`mlua-batteries-sqlite`](crates/mlua-batteries-sqlite) crate in 0.5.0 — see [SQLite](#sqlite-stdsql--stdkv) below.
 
-Default features: `json`, `env`, `path`, `time`, `string`, `validate`.
+Default features: `json`, `env`, `path`, `time`, `string`, `validate`, `pretty`, `argparse`.
 Enable everything: `full`.
 
 ## Quick start
 
 ```toml
 [dependencies]
-mlua-batteries = "0.3"
+mlua-batteries = "0.7"
 ```
 
 ```rust
@@ -68,13 +70,32 @@ for (name, factory) in mlua_batteries::module_entries() {
 }
 ```
 
+## Teal / htl: `require` and shipped declarations
+
+`register_all` installs a global, which a Teal project cannot use (htl lints `global` away). `preload_all` registers the same modules in `package.preload` — `require("mlua_batteries.json")`, and `require("mlua_batteries")` for the namespace — and touches no global; the two compose, so a host may call both. `task` is included when its feature is on (it is built only when required).
+
+```rust
+mlua_batteries::preload_all(&lua, mlua_batteries::PRELOAD_PREFIX)?;   // "mlua_batteries"
+```
+
+The declarations the Teal checker needs ship with the crate (`types/mlua_batteries/*.d.tl`) and are embedded, so a host writes them into its project without knowing the crate's layout:
+
+```rust
+// types/mlua_batteries/json.d.tl, … and a generated init.d.tl for require("mlua_batteries")
+mlua_batteries::dts::write_to("types", mlua_batteries::PRELOAD_PREFIX)?;
+```
+
+Only the modules the host's features enable are written. The prefix is the host's choice and is not baked into the files — a `.d.tl` never names its own module, only its path does — so a host exposing the modules as `std.*` writes `preload_all(&lua, "std")` and `dts::write_to("types", "std")`. The crate's own name is the default because `std` is the host's namespace to assemble: a host may keep its own sandboxed `std.fs` and take only `std.json` from here, and nothing this crate ships should claim `std`. `[package.metadata.htl] dts = [...]` in `Cargo.toml` points tooling at the same files.
+
+Every function raises on failure; the declarations carry that in a header comment rather than `, string` return types, so run under htl's `errors = "return"` or `pcall` for result-style calls. `json.decode` is declared `function<T>(string): T` — annotate the result (`local r: R = json.decode(s)`). `json.null` is the explicit-null sentinel (`T | json.Null` in a record). The declarations are checked against the modules by `tests/dts_drift.rs` (field names both ways, plus `htl check` when htl is installed).
+
 ## Sandboxing
 
 The default configuration uses `Unrestricted` policies — Lua scripts can access any file, URL, and env var. For untrusted scripts, use `Sandboxed` (requires the `sandbox` feature):
 
 ```toml
 [dependencies]
-mlua-batteries = { version = "0.3", features = ["full"] }
+mlua-batteries = { version = "0.7", features = ["full"] }
 ```
 
 ```rust
@@ -133,7 +154,7 @@ Custom providers can be registered via `mlua_batteries::llm::register_provider`.
 
 ```toml
 [dependencies]
-mlua-batteries = { version = "0.5", features = ["task"] }
+mlua-batteries = { version = "0.7", features = ["task"] }
 tokio = { version = "1", features = ["rt", "macros"] }
 ```
 
@@ -161,10 +182,10 @@ The SQLite bridges live in companion crates. They were part of this crate up to 
 
 ```toml
 [dependencies]
-mlua-batteries = { version = "0.5", features = ["task"] }
-mlua-batteries-sqlite = "0.6"          # default, sync model
+mlua-batteries = { version = "0.7", features = ["task"] }
+mlua-batteries-sqlite = "0.8"          # default, sync model
 # ...or, on a rusqlite-isle AsyncIsle:
-mlua-batteries-sqlite-isle = "0.5"
+mlua-batteries-sqlite-isle = "0.7"
 ```
 
 The reason for the split is the SQLite stack, not the code. `libsqlite3-sys` declares `links = "sqlite3"`, so a build graph holds exactly one of its major versions, and cargo enforces that while *resolving* dependencies — meaning no crate can offer several clusters behind mutually exclusive features. Serving more than one cluster requires more than one published version line. Keeping that constraint on the small bridge crate leaves this crate's version line free for its own features, and leaves consumers who do not need SQLite free of a C library.

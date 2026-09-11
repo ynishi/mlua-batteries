@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-11
+
+### Added
+- Teal / htl support. `preload_all(lua, prefix)` / `preload_all_with`
+  register every enabled module in `package.preload` as `<prefix>.<name>`
+  plus the namespace under `<prefix>`, without touching a global (`task` is
+  included when its feature is on). `PRELOAD_PREFIX` (`"mlua_batteries"`) is
+  the name the shipped declarations use; `std` is deliberately not claimed
+  so a host can compose its own namespace.
+- `dts` module: the `.d.tl` declaration for every module, embedded from
+  `types/mlua_batteries/`, feature-gated like `module_entries()`.
+  `dts::write_to(dir, prefix)` writes the enabled ones plus a generated
+  `init.d.tl` under the chosen prefix; `dts::entries()` / `init_source`
+  expose the pieces. `[package.metadata.htl] dts` in `Cargo.toml` lists the
+  files for tooling. `tests/dts_drift.rs` keeps the declarations honest
+  (record fields vs module keys both ways, `htl check` when installed).
+- `json.null` (the encoder's null sentinel, so a script can emit an explicit
+  `null`) and `json.is_null`. `json.decode` still lowers `null` to `nil`.
+- `json::json_to_lua` / `json::lua_to_json` (the nil-lowering converters
+  behind `decode` / `encode`) are public, with `json::DEFAULT_MAX_DEPTH`,
+  so a host bridge converts exactly like the module.
+- `std.pretty` (feature `pretty`, default): `pretty.dump(v, opts?)`, a
+  deterministic table-constructor dump of any Lua value — sorted keys,
+  `<function>` / `<cycle>` / `{...}` rather than errors, `__tostring`
+  honoured, options `indent` / `depth` / `sort_keys`. Never raises.
+- `std.argparse` (feature `argparse`, default): `parse(argv, spec)` and
+  `usage(spec)`; typed flags with short / default / required / multiple,
+  typed positionals with a trailing `rest`, `--`, `--no-flag`, bundled
+  shorts, `allow_unknown`. Raises with an `argparse:` prefix.
+- `task::module(lua)` builds the task table without a global; `register`
+  is unchanged.
+
+### Changed
+- Default features gain `pretty` and `argparse` (both std-only, no new
+  dependencies).
+
 ## [0.6.0] - 2026-09-05
 
 ### Changed
