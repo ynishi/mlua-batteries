@@ -566,6 +566,19 @@ mod tests {
     }
 
     #[test]
+    fn encode_pretty_orders_keys() {
+        // serde_json's Map is a BTreeMap unless some crate in the build
+        // enables `preserve_order`; this pins the sorted output the crate
+        // is tested with.  `std.pretty.dump` sorts on its own and does not
+        // depend on this.
+        let s: String = eval(r#"return std.json.encode_pretty({ b = 1, a = { d = 2, c = 3 } })"#);
+        assert_eq!(
+            s,
+            "{\n  \"a\": {\n    \"c\": 3,\n    \"d\": 2\n  },\n  \"b\": 1\n}"
+        );
+    }
+
+    #[test]
     fn null_sentinel_encodes_as_null() {
         let s: String = eval(r#"return std.json.encode({ name = std.json.null })"#);
         assert_eq!(s, r#"{"name":null}"#);

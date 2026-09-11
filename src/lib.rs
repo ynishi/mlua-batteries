@@ -114,6 +114,8 @@ pub mod llm;
 pub mod log;
 #[cfg(feature = "path")]
 pub mod path;
+#[cfg(feature = "pretty")]
+pub mod pretty;
 #[cfg(feature = "proc")]
 pub mod proc;
 #[cfg(feature = "regex")]
@@ -184,6 +186,7 @@ pub fn register_all_with(lua: &Lua, namespace: &str, config: Config) -> LuaResul
     register!("string", string);
     register!("regex", regex);
     register!("validate", validate);
+    register!("pretty", pretty);
     register!("log", log);
     register!("uuid", uuid);
     register!("base64", base64);
@@ -313,6 +316,7 @@ pub fn module_entries() -> Vec<(&'static str, ModuleFactory)> {
     entry!("string", string);
     entry!("regex", regex);
     entry!("validate", validate);
+    entry!("pretty", pretty);
     entry!("log", log);
     entry!("uuid", uuid);
     entry!("base64", base64);

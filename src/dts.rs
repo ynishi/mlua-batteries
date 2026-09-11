@@ -72,6 +72,7 @@ pub fn entries() -> Vec<Entry> {
     entry!("string");
     entry!("regex");
     entry!("validate");
+    entry!("pretty");
     entry!("log");
     entry!("uuid");
     entry!("base64");
