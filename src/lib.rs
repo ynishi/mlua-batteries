@@ -94,6 +94,8 @@ pub mod config;
 pub mod dts;
 pub mod policy;
 
+#[cfg(feature = "argparse")]
+pub mod argparse;
 #[cfg(feature = "task")]
 pub mod async_overrides;
 #[cfg(feature = "base64")]
@@ -187,6 +189,7 @@ pub fn register_all_with(lua: &Lua, namespace: &str, config: Config) -> LuaResul
     register!("regex", regex);
     register!("validate", validate);
     register!("pretty", pretty);
+    register!("argparse", argparse);
     register!("log", log);
     register!("uuid", uuid);
     register!("base64", base64);
@@ -317,6 +320,7 @@ pub fn module_entries() -> Vec<(&'static str, ModuleFactory)> {
     entry!("regex", regex);
     entry!("validate", validate);
     entry!("pretty", pretty);
+    entry!("argparse", argparse);
     entry!("log", log);
     entry!("uuid", uuid);
     entry!("base64", base64);

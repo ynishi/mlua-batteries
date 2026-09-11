@@ -34,7 +34,7 @@ categories = ["development-tools", "api-bindings"]
 dts = ["types/mlua_batteries/*.d.tl"]
 
 [features]
-default = ["json", "env", "path", "time", "string", "validate", "pretty"]
+default = ["json", "env", "path", "time", "string", "validate", "pretty", "argparse"]
 json = ["dep:serde_json"]
 env = []
 path = []
@@ -44,6 +44,8 @@ regex = ["dep:regex"]
 validate = []
 # Deterministic value dump (`std.pretty.dump`). std-only, no extra deps.
 pretty = []
+# Spec-driven command-line parsing (`std.argparse`). std-only, no extra deps.
+argparse = []
 log = ["dep:log"]
 uuid = ["dep:uuid"]
 base64 = ["dep:base64"]
@@ -70,7 +72,7 @@ task = ["dep:tokio", "dep:tracing", "mlua/async"]
 # the small bridge crate rather than on this facade, whose version line stays
 # free for its own features.
 
-full = ["json", "env", "path", "time", "string", "regex", "validate", "pretty", "log", "uuid", "base64", "fs", "http", "llm", "hash", "sandbox", "proc", "watch", "task"]
+full = ["json", "env", "path", "time", "string", "regex", "validate", "pretty", "argparse", "log", "uuid", "base64", "fs", "http", "llm", "hash", "sandbox", "proc", "watch", "task"]
 
 [dependencies]
 mlua = { version = "0.12", features = ["lua54", "vendored"] }
