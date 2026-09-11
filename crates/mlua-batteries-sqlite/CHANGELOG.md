@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-11
+
+### Changed
+- Depends on `mlua-batteries 0.7` (was `0.6`). No change to this crate's
+  own API; the bump follows the facade's minor so the two resolve together.
+
 ## [0.8.0] - 2026-09-11
 
 Current track: `rusqlite 0.40` / `libsqlite3-sys 0.38`.
