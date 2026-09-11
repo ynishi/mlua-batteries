@@ -67,6 +67,16 @@ pub fn entries() -> Vec<Entry> {
     }
 
     entry!("json");
+    entry!("env");
+    entry!("path");
+    entry!("string");
+    entry!("regex");
+    entry!("validate");
+    entry!("log");
+    entry!("uuid");
+    entry!("base64");
+    entry!("time");
+    entry!("hash");
 
     entries
 }
