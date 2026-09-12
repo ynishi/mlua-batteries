@@ -31,11 +31,11 @@ local record watch
       size: integer
    end
 
-   start: function(string, Options): Handle
+   start: function(root: string, opts?: Options): Handle
    -- Exact journaled path or a path suffix, oldest first.
-   history: function(string, Options): {Version}
+   history: function(path: string, opts?: Options): {Version}
    -- restore(dest_path, sha, opts?)
-   restore: function(string, string, Options): Restored
+   restore: function(dest: string, sha: string, opts?: Options): Restored
 end
 
 return watch

@@ -22,14 +22,15 @@ local record argparse
       metavar: string
    end
 
-   record Positional
+   -- name is required; everything else has a default.
+   record Positional   ---@struct
       name: string
       -- "string" (default) | "integer" | "number"
-      type: string
-      required: boolean
+      type: string         ---@optional
+      required: boolean    ---@optional
       -- Collects every remaining argument as a list. Last only.
-      rest: boolean
-      help: string
+      rest: boolean        ---@optional
+      help: string         ---@optional
    end
 
    record Spec

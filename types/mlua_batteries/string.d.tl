@@ -13,10 +13,10 @@ local record string
    replace: function(string, string, string): string
    replace_all: function(string, string, string): string
    -- width in characters; fill defaults to a space.
-   pad_start: function(string, integer, string): string
-   pad_end: function(string, integer, string): string
+   pad_start: function(s: string, width: integer, fill?: string): string
+   pad_end: function(s: string, width: integer, fill?: string): string
    -- Cuts to max_len characters, suffix (default "...") included.
-   truncate: function(string, integer, string): string
+   truncate: function(s: string, max_len: integer, suffix?: string): string
    upper: function(string): string
    lower: function(string): string
    -- One entry per Unicode scalar value.

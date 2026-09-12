@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-09-12
+
+Declarations only; no Lua or Rust API change.
+
+### Fixed
+- Optional trailing arguments are declared `name?: T`. Under htl 0.4 the
+  un-annotated form was required-arity, so `pretty.dump(v)`,
+  `string.pad_start(s, n)` / `pad_end` / `truncate`, `log.*(msg)`,
+  `http.post(url, body)`, `proc.pipeline(stages)`, `watch.start(root)` /
+  `history` / `restore`, `task.spawn(fn)` / `Scope:spawn` / `with_timeout`
+  failed with "wrong number of arguments" although the Rust side accepts
+  them.
+- `task.spawn`, `Scope:spawn`, `task.scope`, `task.with_timeout`: a nested
+  `function(): any` followed by another parameter was parsed as a
+  multi-value return, so the declared arity was wrong; the function types
+  are parenthesised.
+
+### Added
+- htl markers: `---@struct` / `---@optional` on the records a caller builds
+  (`http.Request`, `llm.Request` / `Message` / `ContentPart`, `proc.Stage` /
+  `FileRef`, `argparse.Positional`) — a literal missing a required field is
+  a `struct-fields` lint; `---@nilable` on the functions that may return
+  nil (`path.parent` / `filename` / `stem` / `ext`, `env.get` / `home`,
+  `regex.find` / `captures`) — a comment to today's htl, reserved for its
+  planned lint.
+- `[package.metadata.htl] dts` lists the files one by one (works with an
+  htl that reads literal paths only); a test keeps the list equal to the
+  directory.
+- `tests/dts_drift.rs` runs the consumer-shaped probe under `htl check
+  --strict` and checks the `struct-fields` lint fires once per missing
+  field (when htl is installed).
+
 ## [0.7.1] - 2026-09-12
 
 ### Fixed

@@ -4,10 +4,10 @@
 local record path
    join: function(...: string): string
    -- nil when there is no parent / file name / stem / extension.
-   parent: function(string): string
-   filename: function(string): string
-   stem: function(string): string
-   ext: function(string): string
+   parent: function(p: string): string     ---@nilable
+   filename: function(p: string): string   ---@nilable
+   stem: function(p: string): string       ---@nilable
+   ext: function(p: string): string        ---@nilable
    absolute: function(string): string
    is_absolute: function(string): boolean
 end

@@ -13,7 +13,7 @@ homepage = "https://github.com/ynishi/mlua-batteries"
 
 [package]
 name = "mlua-batteries"
-version = "0.7.1"
+version = "0.7.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -28,10 +28,32 @@ categories = ["development-tools", "api-bindings"]
 # Teal declarations for the Lua modules, one per module, named for
 # `require("mlua_batteries.<module>")`.  `mlua_batteries::dts::write_to`
 # writes the enabled ones (plus a generated init.d.tl) under a chosen
-# prefix; this list is the static hint for tooling that copies the
-# crate's own files instead.  Nothing here claims `std`.
+# prefix; this list is the static hint for tooling (htl) that copies the
+# crate's own files instead.  Listed one by one rather than as a glob so
+# an htl that reads literal paths only (0.4.0) works too; tests/dts_drift.rs
+# checks the list against the directory.  Nothing here claims `std`.
 [package.metadata.htl]
-dts = ["types/mlua_batteries/*.d.tl"]
+dts = [
+    "types/mlua_batteries/argparse.d.tl",
+    "types/mlua_batteries/base64.d.tl",
+    "types/mlua_batteries/env.d.tl",
+    "types/mlua_batteries/fs.d.tl",
+    "types/mlua_batteries/hash.d.tl",
+    "types/mlua_batteries/http.d.tl",
+    "types/mlua_batteries/json.d.tl",
+    "types/mlua_batteries/llm.d.tl",
+    "types/mlua_batteries/log.d.tl",
+    "types/mlua_batteries/path.d.tl",
+    "types/mlua_batteries/pretty.d.tl",
+    "types/mlua_batteries/proc.d.tl",
+    "types/mlua_batteries/regex.d.tl",
+    "types/mlua_batteries/string.d.tl",
+    "types/mlua_batteries/task.d.tl",
+    "types/mlua_batteries/time.d.tl",
+    "types/mlua_batteries/uuid.d.tl",
+    "types/mlua_batteries/validate.d.tl",
+    "types/mlua_batteries/watch.d.tl",
+]
 
 [features]
 default = ["json", "env", "path", "time", "string", "validate", "pretty", "argparse"]
