@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-12
+
+### Fixed
+- `json.d.tl`: `decode` and `read_file` were declared only as
+  `function<T>(string): T`, and a generic does not resolve through `pcall`
+  — `pcall(json.decode, s)` and a bare `json.decode(s)` failed the check
+  with "cannot infer declaration type", which matters because every
+  function raises and a consumer wraps it. Both are now declared twice
+  (`any` and `<T>`), so those shapes check and an annotated call still
+  gets its type. The header comment shows the `pcall` forms. The `htl
+  check` test now exercises consumer-shaped calls, not just `require`.
+
 ## [0.7.0] - 2026-09-11
 
 ### Added
