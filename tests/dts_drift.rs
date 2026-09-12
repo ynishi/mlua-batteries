@@ -147,6 +147,26 @@ fn declarations_type_check_under_htl() {
         "local ns = require(\"{p}\")\nprint(ns)\n",
         p = mlua_batteries::PRELOAD_PREFIX
     ));
+    // Call shapes a consumer actually writes, so a declaration that only
+    // loads but cannot be used that way fails here.  Every function raises,
+    // so the pcall forms are the ones that matter most.
+    #[cfg(feature = "json")]
+    probe.push_str(
+        r#"
+local record R
+   name: string
+end
+local ok1, v1 = pcall(json.decode, "{}")
+local r1: R = json.decode("{}")
+local r2 = json.decode("{}")
+local ok2, r3 = pcall(function(): R return json.decode("{}") end)
+local ok3, f1 = pcall(json.read_file, "x.json")
+local f2: R = json.read_file("x.json")
+local e: R = { name = json.null as string }
+local tags: {string} = json.array()
+print(ok1, v1, r1, r2, ok2, r3, ok3, f1, f2, e, tags, json.is_null(json.null), json.encode(e))
+"#,
+    );
     std::fs::write(dir.join("src/probe.tl"), probe).unwrap();
 
     let out = Command::new("htl")
