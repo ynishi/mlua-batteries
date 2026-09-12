@@ -3,37 +3,39 @@
 -- the LLM policy must allow a request; `chat` raises on a denied or
 -- failed request, `batch` reports per-entry errors instead.
 local record llm
-   record ContentPart
+   -- type selects which other field is read: text / url / data + media_type.
+   record ContentPart   ---@struct
       -- "text" | "image_url" | "image_base64"
       type: string
-      text: string
-      url: string
-      data: string
-      media_type: string
+      text: string         ---@optional
+      url: string          ---@optional
+      data: string         ---@optional
+      media_type: string   ---@optional
    end
 
-   record Message
+   record Message   ---@struct
       -- "user" | "assistant" (system prompts go in Request.system)
       role: string
       content: string | {ContentPart}
    end
 
-   record Request
+   -- Built by the caller: provider and model are required, plus one of
+   -- prompt / messages.
+   record Request   ---@struct
       provider: string
       model: string
-      -- One of prompt / messages.
-      prompt: string
-      messages: {Message}
-      system: string
-      max_tokens: integer
-      temperature: number
-      stop: {string}
-      api_key: string
-      base_url: string
+      prompt: string             ---@optional
+      messages: {Message}        ---@optional
+      system: string             ---@optional
+      max_tokens: integer        ---@optional
+      temperature: number        ---@optional
+      stop: {string}             ---@optional
+      api_key: string            ---@optional
+      base_url: string           ---@optional
       -- Seconds.
-      timeout: integer
+      timeout: integer           ---@optional
       -- Provider-specific fields merged into the request body.
-      extra: {string: any}
+      extra: {string: any}       ---@optional
    end
 
    record Usage

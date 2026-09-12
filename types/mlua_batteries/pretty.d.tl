@@ -12,7 +12,7 @@ local record pretty
       sort_keys: boolean
    end
 
-   dump: function(any, Options): string
+   dump: function(v: any, opts?: Options): string
 end
 
 return pretty

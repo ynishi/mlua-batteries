@@ -24,7 +24,7 @@ local record task
 
    record Scope
       name: string
-      spawn: function(Scope, function(): any, SpawnOptions): Handle
+      spawn: function(self: Scope, body: (function(): any), opts?: SpawnOptions): Handle
       cancel: function(Scope)
       token: function(Scope): CancelToken
    end
@@ -47,7 +47,7 @@ local record task
    end
 
    -- Attaches to the current scope (the VM root when none is active).
-   spawn: function(function(): any, SpawnOptions): Handle
+   spawn: function(body: (function(): any), opts?: SpawnOptions): Handle
    -- Milliseconds.
    sleep: function(number)
    yield: function()
@@ -56,10 +56,10 @@ local record task
    current: function(): Current
    -- Waits for every task spawned into the scope before returning the
    -- body's result.
-   scope: function(function(Scope): any): any
-   scope: function(string, function(Scope): any): any
+   scope: function(body: (function(Scope): any)): any
+   scope: function(name: string, body: (function(Scope): any)): any
    -- with_timeout(ms, body, opts?): deadline, then grace, then abort.
-   with_timeout: function(number, function(Scope): any, TimeoutOptions): any
+   with_timeout: function(ms: number, body: (function(Scope): any), opts?: TimeoutOptions): any
 end
 
 return task

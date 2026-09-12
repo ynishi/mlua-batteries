@@ -10,10 +10,10 @@ local record regex
 
    is_match: function(string, string): boolean
    -- nil when there is no match.
-   find: function(string, string): Match
+   find: function(s: string, pattern: string): Match   ---@nilable
    find_all: function(string, string): {Match}
    -- [1] is the whole match, [2..] the groups; nil when there is no match.
-   captures: function(string, string): {string}
+   captures: function(s: string, pattern: string): {string}   ---@nilable
    -- First occurrence only. `$1` / `$name` expand in the replacement.
    replace: function(string, string, string): string
    replace_all: function(string, string, string): string

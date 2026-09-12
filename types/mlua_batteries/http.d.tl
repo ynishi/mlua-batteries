@@ -7,20 +7,21 @@ local record http
       body: string
    end
 
-   record Request
+   -- Built by the caller: method and url are required, the rest optional.
+   record Request   ---@struct
       method: string
       url: string
-      headers: {string: string}
-      body: string
+      headers: {string: string}   ---@optional
+      body: string                ---@optional
       -- Seconds; the host's default when absent.
-      timeout: integer
-      content_type: string
+      timeout: integer            ---@optional
+      content_type: string        ---@optional
    end
 
    get: function(string): Response
    -- post(url, body, content_type?); content_type defaults to
    -- application/json.
-   post: function(string, string, string): Response
+   post: function(url: string, body: string, content_type?: string): Response
    request: function(Request): Response
 end
 

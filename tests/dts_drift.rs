@@ -112,15 +112,42 @@ fn every_declaration_has_a_module_and_vice_versa() {
     }
 }
 
-/// `htl check` over the written declarations, when htl is installed.
+/// `[package.metadata.htl] dts` in Cargo.toml lists the shipped files one
+/// by one; it must name exactly the files in `types/mlua_batteries/`.
 #[test]
-fn declarations_type_check_under_htl() {
+fn cargo_metadata_lists_every_shipped_declaration() {
+    let manifest =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")).unwrap();
+    let start = manifest
+        .find("[package.metadata.htl]")
+        .expect("metadata.htl section");
+    let section = &manifest[start..];
+    let open = section.find("dts = [").expect("dts list") + "dts = [".len();
+    let close = section[open..].find(']').expect("dts list end") + open;
+    let listed: BTreeSet<String> = section[open..close]
+        .split(',')
+        .map(|s| s.trim().trim_matches('"').to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/types/mlua_batteries"));
+    let on_disk: BTreeSet<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .filter(|n| n.ends_with(".d.tl"))
+        .map(|n| format!("types/mlua_batteries/{n}"))
+        .collect();
+    assert_eq!(listed, on_disk);
+}
+
+/// Write the declarations for the prefix into a fresh temp project and
+/// return its root, or `None` when htl is not installed.
+fn htl_project() -> Option<std::path::PathBuf> {
     let Ok(version) = Command::new("htl").arg("--version").output() else {
         eprintln!("htl not on PATH; skipping the Teal check of the declarations");
-        return;
+        return None;
     };
     assert!(version.status.success());
-
     let dir = std::env::temp_dir().join(format!(
         "mlua-batteries-htl-check-{}-{}",
         std::process::id(),
@@ -132,13 +159,41 @@ fn declarations_type_check_under_htl() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("htl.toml"), "").unwrap();
     dts::write_to(dir.join("types"), mlua_batteries::PRELOAD_PREFIX).unwrap();
+    Some(dir)
+}
 
-    // A probe that requires every module and the namespace, so an invalid
-    // declaration is an error at the require site.
+/// Run `htl check` on `src/probe.tl`; returns (success, combined output).
+fn htl_check(dir: &std::path::Path, probe: &str, strict: bool) -> (bool, String) {
+    std::fs::write(dir.join("src/probe.tl"), probe).unwrap();
+    let mut args = vec!["check", "--no-cache"];
+    if strict {
+        args.push("--strict");
+    }
+    args.push("src/probe.tl");
+    let out = Command::new("htl")
+        .args(&args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    let report = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.success(), report)
+}
+
+/// Every declaration loads, and the call shapes a consumer actually writes
+/// type-check with no error, warning or lint (`--strict`).
+#[test]
+fn declarations_type_check_under_htl() {
+    let Some(dir) = htl_project() else { return };
+
+    // `m_` so a module named like a Teal builtin (`string`) does not shadow it.
     let mut probe = String::new();
     for e in dts::entries() {
         probe.push_str(&format!(
-            "local {n} = require(\"{p}.{n}\")\nprint({n})\n",
+            "local m_{n} = require(\"{p}.{n}\")\nprint(m_{n})\n",
             n = e.name,
             p = mlua_batteries::PRELOAD_PREFIX
         ));
@@ -147,38 +202,106 @@ fn declarations_type_check_under_htl() {
         "local ns = require(\"{p}\")\nprint(ns)\n",
         p = mlua_batteries::PRELOAD_PREFIX
     ));
-    // Call shapes a consumer actually writes, so a declaration that only
-    // loads but cannot be used that way fails here.  Every function raises,
-    // so the pcall forms are the ones that matter most.
+
+    // Every function raises, so the pcall forms matter most; the generic
+    // `<T>` alone does not resolve through pcall, hence the `any` twin.
     #[cfg(feature = "json")]
     probe.push_str(
         r#"
 local record R
    name: string
 end
-local ok1, v1 = pcall(json.decode, "{}")
-local r1: R = json.decode("{}")
-local r2 = json.decode("{}")
-local ok2, r3 = pcall(function(): R return json.decode("{}") end)
-local ok3, f1 = pcall(json.read_file, "x.json")
-local f2: R = json.read_file("x.json")
-local e: R = { name = json.null as string }
-local tags: {string} = json.array()
-print(ok1, v1, r1, r2, ok2, r3, ok3, f1, f2, e, tags, json.is_null(json.null), json.encode(e))
+local ok1, v1 = pcall(m_json.decode, "{}")
+local r1: R = m_json.decode("{}")
+local r2 = m_json.decode("{}")
+local ok2, r3 = pcall(function(): R return m_json.decode("{}") end)
+local ok3, f1 = pcall(m_json.read_file, "x.json")
+local f2: R = m_json.read_file("x.json")
+local e: R = { name = m_json.null as string }
+local tags: {string} = m_json.array()
+local t2 = m_json.array()
+print(ok1, v1, r1, r2, ok2, r3, ok3, f1, f2, e, tags, t2, m_json.is_null(m_json.null), m_json.encode(e))
 "#,
     );
-    std::fs::write(dir.join("src/probe.tl"), probe).unwrap();
-
-    let out = Command::new("htl")
-        .args(["check", "--no-cache", "src/probe.tl"])
-        .current_dir(&dir)
-        .output()
-        .unwrap();
-    let report = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
+    // Optional trailing arguments (`name?: T`) left out, as the Rust side
+    // allows.
+    #[cfg(feature = "pretty")]
+    probe.push_str("print(m_pretty.dump({ a = 1 }), m_pretty.dump({ a = 1 }, { indent = 0 }))\n");
+    #[cfg(feature = "string")]
+    probe.push_str(
+        "print(m_string.pad_start(\"x\", 4), m_string.pad_end(\"x\", 4), m_string.truncate(\"abcdef\", 3))\n",
     );
+    #[cfg(feature = "log")]
+    probe.push_str("m_log.info(\"hi\")\nm_log.warn(\"hi\", { k = 1 })\n");
+    #[cfg(feature = "http")]
+    probe.push_str("local rq: m_http.Request = { method = \"GET\", url = \"u\" }\nprint(rq)\n");
+    #[cfg(feature = "proc")]
+    probe.push_str(
+        "local st: m_proc.Stage = { argv = { \"ls\" } }\nlocal fr: m_proc.FileRef = { path = \"p\" }\nprint(st, fr)\n",
+    );
+    #[cfg(feature = "llm")]
+    probe.push_str(
+        "local lq: m_llm.Request = { provider = \"p\", model = \"m\", prompt = \"q\" }\nlocal lm: m_llm.Message = { role = \"user\", content = \"x\" }\nprint(lq, lm)\n",
+    );
+    #[cfg(feature = "argparse")]
+    probe.push_str("local ps: m_argparse.Positional = { name = \"x\" }\nprint(ps)\n");
+    // Nil-able returns are declared as the plain type (Teal has no non-nil
+    // type); the ---@nilable marker is a comment to the checker.
+    #[cfg(feature = "path")]
+    probe.push_str("local par = m_path.parent(\"/a/b\")\nif par then print(par:upper()) end\n");
+
+    let (ok, report) = htl_check(&dir, &probe, true);
     std::fs::remove_dir_all(&dir).unwrap();
-    assert!(out.status.success(), "htl check failed:\n{report}");
+    assert!(ok, "htl check --strict failed:\n{report}");
+}
+
+/// `---@struct` records report a literal that leaves a required field out
+/// (lint `struct-fields`), once per literal, naming the field.
+#[test]
+fn struct_markers_lint_missing_required_fields() {
+    let Some(dir) = htl_project() else { return };
+
+    let mut probe = String::new();
+    let mut expected: Vec<&str> = Vec::new();
+    #[cfg(feature = "argparse")]
+    {
+        probe.push_str("local m_argparse = require(\"mlua_batteries.argparse\")\nlocal a: m_argparse.Positional = { required = true }\nprint(a)\n");
+        expected.push("Positional is built without name");
+    }
+    #[cfg(feature = "http")]
+    {
+        probe.push_str("local m_http = require(\"mlua_batteries.http\")\nlocal b: m_http.Request = { url = \"u\" }\nprint(b)\n");
+        expected.push("Request is built without method");
+    }
+    #[cfg(feature = "proc")]
+    {
+        probe.push_str("local m_proc = require(\"mlua_batteries.proc\")\nlocal c: m_proc.Stage = { env = {} }\nlocal d: m_proc.FileRef = { append = true }\nprint(c, d)\n");
+        expected.push("Stage is built without argv");
+        expected.push("FileRef is built without path");
+    }
+    #[cfg(feature = "llm")]
+    {
+        probe.push_str("local m_llm = require(\"mlua_batteries.llm\")\nlocal e: m_llm.Request = { model = \"m\" }\nlocal f: m_llm.Message = { role = \"user\" }\nprint(e, f)\n");
+        expected.push("Request is built without provider");
+        expected.push("Message is built without content");
+    }
+    if expected.is_empty() {
+        std::fs::remove_dir_all(&dir).unwrap();
+        return;
+    }
+
+    let (_, report) = htl_check(&dir, &probe, false);
+    std::fs::remove_dir_all(&dir).unwrap();
+    let lints: Vec<&str> = report
+        .lines()
+        .filter(|l| l.contains("[htl struct-fields]"))
+        .collect();
+    assert_eq!(lints.len(), expected.len(), "{report}");
+    for want in expected {
+        assert!(
+            lints.iter().any(|l| l.contains(want)),
+            "missing `{want}` in:\n{report}"
+        );
+    }
+    assert!(report.contains(" 0 error(s)"), "{report}");
 }

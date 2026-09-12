@@ -2,15 +2,15 @@
 -- argv arrays, no shell involved. Raises on a malformed spec or a spawn
 -- failure; a non-zero exit is reported in the result, not raised.
 local record proc
-   record Stage
+   record Stage   ---@struct
       argv: {string}
-      env: {string: string}
+      env: {string: string}   ---@optional
    end
 
-   record FileRef
+   record FileRef   ---@struct
       path: string
       -- stdout_to only.
-      append: boolean
+      append: boolean   ---@optional
    end
 
    record Options
@@ -37,7 +37,7 @@ local record proc
       stages: {StageResult}
    end
 
-   pipeline: function({Stage}, Options): Result
+   pipeline: function(stages: {Stage}, opts?: Options): Result
 end
 
 return proc
